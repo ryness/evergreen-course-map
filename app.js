@@ -1,11 +1,11 @@
-import { TERMS, STANDINGS, FORMATS, INTERESTS, offeringAvailable, planIssues } from './planner.js';
-import { THEMES, courseRelevance, courseAlreadyTaken, suggestThemePlan, replacementSuggestions } from './recommend.js?v=20260927-exclusions';
+import { TERMS, STANDINGS, FORMATS, INTERESTS, offeringAvailable, planIssues } from './planner.js?v=20260927-avoid-fields';
+import { THEMES, courseRelevance, courseAlreadyTaken, suggestThemePlan, replacementSuggestions } from './recommend.js?v=20260927-avoid-fields';
 
 const COOKIE = 'evergreen-course-map-v1';
 const EXCLUDED_COOKIE = 'evergreen-course-map-excluded-v1';
 const $ = id => document.getElementById(id);
 const emptyPlan = () => Object.fromEntries(TERMS.map(term => [term, []]));
-const defaults = { academicYear: '', standing: 'Freshman', target: 16, location: 'Any location', careerGoals: '', academicFocus: '', otherInterests: '', completedCourses: '', formats: [...FORMATS] };
+const defaults = { academicYear: '', standing: 'Freshman', target: 16, location: 'Any location', careerGoals: '', academicFocus: '', otherInterests: '', dislikedFields: '', completedCourses: '', formats: [...FORMATS] };
 const state = { prefs: { ...defaults }, plans: {}, themes: {}, excluded: {}, compare: [], replacement: null, term: 'Fall', query: '', sort: 'relevance', visible: 18, data: null, manifest: null };
 let toastTimer, goalsTimer;
 
@@ -23,6 +23,7 @@ function readCookie() {
       careerGoals: typeof prefs.careerGoals === 'string' ? prefs.careerGoals.slice(0, 300) : '',
       academicFocus: typeof prefs.academicFocus === 'string' ? prefs.academicFocus.slice(0, 300) : (Array.isArray(prefs.interests) ? prefs.interests.map(id => INTERESTS.find(item => item.id === id)?.label).filter(Boolean).join(', ') : ''),
       otherInterests: typeof prefs.otherInterests === 'string' ? prefs.otherInterests.slice(0, 300) : '',
+      dislikedFields: typeof prefs.dislikedFields === 'string' ? prefs.dislikedFields.slice(0, 300) : '',
       completedCourses: typeof prefs.completedCourses === 'string' ? prefs.completedCourses.slice(0, 450) : '',
       formats: Array.isArray(prefs.formats) && prefs.formats.length ? prefs.formats.filter(x => FORMATS.includes(x)) : [...FORMATS],
     };
@@ -101,6 +102,7 @@ function syncGoalInputs() {
   $('career-goals').value = state.prefs.careerGoals;
   $('academic-focus').value = state.prefs.academicFocus;
   $('other-interests').value = state.prefs.otherInterests;
+  $('disliked-fields').value = state.prefs.dislikedFields;
   $('completed-courses').value = state.prefs.completedCourses;
 }
 
@@ -121,7 +123,7 @@ function renderCourses() {
   if (state.sort === 'title') results.sort((a,b) => a.title.localeCompare(b.title));
   else if (state.sort === 'credits') results.sort((a,b) => Math.max(...b.credits) - Math.max(...a.credits) || a.title.localeCompare(b.title));
   else results.sort((a,b) => relevance(b) - relevance(a) || a.title.localeCompare(b.title));
-  const hasGoals = Boolean(state.prefs.careerGoals || state.prefs.academicFocus || state.prefs.otherInterests);
+  const hasGoals = Boolean(state.prefs.careerGoals || state.prefs.academicFocus || state.prefs.otherInterests || state.prefs.dislikedFields);
   $('result-count').textContent = `${results.length} ${results.length === 1 ? 'offering' : 'offerings'} for ${state.term.toLowerCase()}${hasGoals ? ' · ranked by your goals' : ''}`;
   const shown = results.slice(0, state.visible);
   $('course-list').innerHTML = shown.length ? shown.map(course => {
@@ -241,9 +243,10 @@ function events() {
   $('standing').addEventListener('change', event => { state.prefs.standing = event.target.value; updatePrefs(); });
   $('target').addEventListener('change', event => { state.prefs.target = Number(event.target.value); updatePrefs(); });
   $('location').addEventListener('change', event => { state.prefs.location = event.target.value; updatePrefs(); });
-  for (const [id, key] of [['career-goals','careerGoals'], ['academic-focus','academicFocus'], ['other-interests','otherInterests'], ['completed-courses','completedCourses']]) {
+  for (const [id, key] of [['career-goals','careerGoals'], ['academic-focus','academicFocus'], ['other-interests','otherInterests'], ['disliked-fields','dislikedFields'], ['completed-courses','completedCourses']]) {
     $(id).addEventListener('input', event => {
       state.prefs[key] = event.target.value;
+      save();
       clearTimeout(goalsTimer);
       goalsTimer = setTimeout(updatePrefs, 280);
     });

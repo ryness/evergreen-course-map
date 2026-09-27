@@ -1,4 +1,4 @@
-import { TERMS, INTERESTS, offeringAvailable, courseConflict } from './planner.js';
+import { TERMS, INTERESTS, offeringAvailable, courseConflict } from './planner.js?v=20260927-avoid-fields';
 
 export const THEMES = [
   { id: 'core', label: 'Deep in my core academic interest', hint: 'Substantial interdisciplinary programs centered on your main subject.' },
@@ -31,6 +31,9 @@ function normalized(text) {
     .replace(/\bintroduction\b|\bintroductory\b/g, 'intro')
     .replace(/\bpsych\b/g, 'psychology')
     .replace(/\bstats\b/g, 'statistics')
+    .replace(/\bmath\b/g, 'mathematics')
+    .replace(/\bbio\b/g, 'biology')
+    .replace(/\bchem\b/g, 'chemistry')
     .replace(/\biii\b/g, '3').replace(/\bii\b/g, '2').replace(/\bi\b/g, '1')
     .replace(/\bu\.?s\.?\b/g, 'us')
     .replace(/[^a-z0-9]+/g, ' ').trim();
@@ -64,6 +67,8 @@ function profile(prefs) {
   ];
   const tags = new Map();
   const careerTags = new Set();
+  const avoidTags = INTERESTS.filter(interest => interest.test.test(prefs.dislikedFields || '')).map(interest => interest.id);
+  const avoidTokens = [...new Set(words(prefs.dislikedFields || '').filter(word => word.length > 2))].slice(0, 18);
   for (const field of fields) {
     for (const interest of INTERESTS) {
       if (interest.test.test(field.text)) tags.set(interest.id, (tags.get(interest.id) || 0) + field.weight);
@@ -77,7 +82,7 @@ function profile(prefs) {
       }
     }
   }
-  return { tags, careerTags, fields: fields.map(field => ({ ...field, tokens: [...new Set(words(field.text).filter(word => word.length > 2))] })) };
+  return { tags, careerTags, avoidTags, avoidTokens, fields: fields.map(field => ({ ...field, tokens: [...new Set(words(field.text).filter(word => word.length > 2))] })) };
 }
 
 function subjectFields(course) {
@@ -104,8 +109,28 @@ function matchScore(course, input) {
   return score;
 }
 
+function avoidanceScore(course, input) {
+  if (!input.avoidTags.length && !input.avoidTokens.length) return 0;
+  const title = course.title || '';
+  const fields = subjectFields(course);
+  const description = course.description || '';
+  let score = 0;
+  for (const tag of input.avoidTags) {
+    const matcher = INTERESTS.find(item => item.id === tag)?.test;
+    if (matcher) score += matcher.test(title) ? 34 : matcher.test(fields) ? 20 : matcher.test(description) ? 2 : 0;
+  }
+  const titleWords = new Set(words(title));
+  const fieldWords = new Set(words(fields));
+  const descWords = new Set(words(description));
+  for (const token of input.avoidTokens) {
+    score += titleWords.has(token) ? 10 : fieldWords.has(token) ? 6 : descWords.has(token) ? 0.6 : 0;
+  }
+  return Math.min(score, 100);
+}
+
 export function courseRelevance(course, prefs) {
-  return matchScore(course, profile(prefs));
+  const input = profile(prefs);
+  return matchScore(course, input) - avoidanceScore(course, input);
 }
 
 function primaryTags(course) {
@@ -184,7 +209,7 @@ export function suggestThemePlan(courses, prefs, themeId) {
           if (themeId === 'breadth' && credits > 8) continue;
           const core = matchScore(course, input);
           const focusWeight = ({ core: 0.5, breadth: 0.18, practice: 0.2, career: 0.3, creative: 0.2, civic: 0.22, inquiry: 0.18, discovery: 0.1 })[themeId];
-          const score = core * focusWeight + themeBonus(course, term, themeId, credits, selected, previousTitles, input)
+          const score = core * focusWeight - avoidanceScore(course, input) + themeBonus(course, term, themeId, credits, selected, previousTitles, input)
             + credits / prefs.target * (themeId === 'breadth' ? 4 : 7)
             + (selected.length === 0 && themeId === 'core' && credits >= 12 ? 8 : 0)
             - (credits <= 2 ? 3 : 0);
@@ -219,7 +244,7 @@ export function replacementSuggestions(courses, prefs, plan, term, removed, them
       });
       const credits = options[0];
       const overlap = primaryTags(course).filter(tag => removedTags.includes(tag)).length;
-      const score = matchScore(course, input) + themeBonus(course, term, themeId, credits, [], new Set(), input) * 0.55
+      const score = matchScore(course, input) - avoidanceScore(course, input) + themeBonus(course, term, themeId, credits, [], new Set(), input) * 0.55
         + overlap * 4 + (credits <= room ? 9 : 0)
         - Math.abs(credits - (removed?.credits || Math.max(room, 4))) * 0.5;
       const reason = overlap ? 'Related subject' : courseRelevance(course, prefs) > 8 ? 'Matches your goals' : credits <= room ? 'Fits your credit target' : 'More credits to consider';

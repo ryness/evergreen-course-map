@@ -7,8 +7,8 @@
   <meta name="description" content="Explore Evergreen State College courses, compare possible paths, and build a quarter-by-quarter plan.">
   <title>Evergreen Course Map</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="styles.css?v=20260927-exclusions">
-  <script type="module" src="app.js?v=20260927-exclusions"></script>
+  <link rel="stylesheet" href="styles.css?v=20260927-avoid-fields">
+  <script type="module" src="app.js?v=20260927-avoid-fields"></script>
 </head>
 <body>
   <header class="site-header">
@@ -37,7 +37,8 @@
         <label class="goal-card" for="career-goals"><span class="goal-number">01</span><strong>What do you want to be when you grow up?</strong><span>Job titles or careers you’re curious about</span><textarea id="career-goals" rows="3" maxlength="300" placeholder="e.g. lawyer, journalist, community organizer"></textarea></label>
         <label class="goal-card" for="academic-focus"><span class="goal-number">02</span><strong>Your core academic focus</strong><span>What kinds of courses do you most want to take?</span><textarea id="academic-focus" rows="3" maxlength="300" placeholder="e.g. literature, public policy, creative writing"></textarea></label>
         <label class="goal-card" for="other-interests"><span class="goal-number">03</span><strong>Other interests, joys &amp; hobbies</strong><span>What else do you enjoy or want to try?</span><textarea id="other-interests" rows="3" maxlength="300" placeholder="e.g. music, hiking, making films"></textarea></label>
-        <label class="goal-card" for="completed-courses"><span class="goal-number">04</span><strong>Classes or credits you already have</strong><span>List course names or equivalents, ideally one per line. A credit total alone can’t identify duplicate classes.</span><textarea id="completed-courses" rows="3" maxlength="450" placeholder="e.g. Introduction to Psychology&#10;Statistics I&#10;8 transfer credits in U.S. history"></textarea></label>
+        <label class="goal-card" for="disliked-fields"><span class="goal-number">04</span><strong>Academic fields you’d rather avoid</strong><span>We’ll rank these subjects lower, but keep them available to browse.</span><textarea id="disliked-fields" rows="3" maxlength="300" placeholder="e.g. calculus, lab science, business"></textarea></label>
+        <label class="goal-card goal-card-wide" for="completed-courses"><span class="goal-number">05</span><strong>Classes or credits you already have</strong><span>List course names or equivalents, ideally one per line. A credit total alone can’t identify duplicate classes.</span><textarea id="completed-courses" rows="3" maxlength="450" placeholder="e.g. Introduction to Psychology&#10;Statistics I&#10;8 transfer credits in U.S. history"></textarea></label>
       </div>
       <div class="facet-row last"><div><h3>How do you want to learn?</h3><p>Include all formats, or narrow the choices.</p></div><div id="formats" class="chips" role="group" aria-label="Class formats"></div></div>
       <div class="setup-footer"><span id="data-note">Loading the catalog…</span><button id="reset" class="text-button" type="button">Clear my saved choices</button></div>

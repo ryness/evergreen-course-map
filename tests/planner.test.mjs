@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { courseConflict, offeringAvailable, planIssues, TERMS } from '../planner.js';
-import { THEMES, courseAlreadyTaken, replacementSuggestions, suggestThemePlan } from '../recommend.js';
+import { THEMES, courseAlreadyTaken, courseRelevance, replacementSuggestions, suggestThemePlan } from '../recommend.js';
 
 const meeting = (day, start, end, weeks = [1, 2, 3]) => ({ day, start, end, weeks });
 const makeCourse = (id, title, credits, meetings, extra = {}) => ({
@@ -67,6 +67,19 @@ test('excluded courses are omitted from generated themes', () => {
   const plan = suggestThemePlan(courses, { ...prefs, excludedCourseIds: ['a'] }, 'core');
   assert.ok(plan.Fall.every(item => item.id !== 'a'));
   assert.ok(plan.Fall.some(item => item.id === 'b'));
+});
+
+test('disliked academic fields lower ranking without hiding courses', () => {
+  const math = makeCourse('math', 'Civic Mathematics', 16, [], { type: 'Program', fields: ['Mathematics'] });
+  const literature = makeCourse('lit', 'Civic Literature', 16, [], { type: 'Program', fields: ['Literature'] });
+  const preferences = { ...prefs, target: 16, academicFocus: 'civic', careerGoals: '', dislikedFields: 'math' };
+  assert.ok(courseRelevance(math, preferences) < courseRelevance(math, { ...preferences, dislikedFields: '' }));
+  assert.ok(courseRelevance(literature, preferences) > courseRelevance(math, preferences));
+  assert.equal(suggestThemePlan([math, literature], preferences, 'core').Fall[0]?.id, 'lit');
+  assert.equal(suggestThemePlan([math], preferences, 'core').Fall[0]?.id, 'math');
+  const replacements = replacementSuggestions([math, literature], preferences, { Fall: [], Winter: [], Spring: [] }, 'Fall', { id: 'old', credits: 16 });
+  assert.equal(replacements[0]?.course.id, 'lit');
+  assert.ok(replacements.some(item => item.course.id === 'math'));
 });
 
 test('completed titles match conservatively and do not conflate course sequences', () => {

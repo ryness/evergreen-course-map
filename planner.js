@@ -17,7 +17,7 @@ export const INTERESTS = [
   { id: "business", label: "Business & nonprofits", test: /business|entrepreneur|economics|management|nonprofit|leadership|organizational/i },
   { id: "science", label: "Science & health", test: /biology|chemistry|physics|health|medicine|geology|astronomy|science/i },
   { id: "languages", label: "Language & culture", test: /language|linguistic|cultural studies|world cinema|translation|spanish|french|chinese/i },
-  { id: "mathematics", label: "Math & statistics", test: /mathematics|statistics|quantitative|calculus|algebra|probabilit/i },
+  { id: "mathematics", label: "Math & statistics", test: /\bmath\b|mathematic|statistics|quantitative|calculus|algebra|probabilit/i },
 ];
 
 export function offeringAvailable(course, term, prefs) {

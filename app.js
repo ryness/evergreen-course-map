@@ -1,4 +1,4 @@
-import { TERMS, STANDINGS, FORMATS, INTERESTS, offeringAvailable, reviewPlan } from './planner.js?v=20260927-final-review';
+import { TERMS, STANDINGS, FORMATS, INTERESTS, compactMeetingTimes, offeringAvailable, reviewPlan } from './planner.js?v=20260927-meeting-times';
 import { THEMES, courseRelevance, courseAlreadyTaken, suggestThemePlan, spinQuarterPlan, replacementSuggestions } from './recommend.js?v=20260927-goals-toggle';
 
 const COOKIE = 'evergreen-course-map-v1';
@@ -222,7 +222,7 @@ function renderPlan() {
     return `<section class="plan-term"><div class="plan-term-head"><div><span>${term}</span><small>${sum} / ${state.prefs.target} credits</small></div><button class="new-spin" type="button" data-spin-term="${term}" aria-label="New ${term} course combination">↻ New spin</button></div><progress max="${state.prefs.target}" value="${Math.min(sum,state.prefs.target)}" aria-label="${term} credits"></progress>${entries.length ? entries.map(item => {
       const course = lookup.get(item.id);
       const choices = pinControl(course, term, !!item.pinned, 'plan-pin choice-pin') + (item.pinned ? '' : `<button class="plan-exclude" type="button" data-exclude="${escapeHtml(course.id)}" data-exclude-term="${term}" aria-label="Exclude ${escapeHtml(course.title)} from suggestions">Not for me</button>`);
-      return `<div class="plan-item${item.pinned ? ' is-pinned' : ''}"><div><a href="${escapeHtml(course.url)}" target="_blank" rel="noopener">${escapeHtml(course.title)} ↗</a><small>${item.credits} credits · ${escapeHtml(course.modes?.[term] || 'Format TBA')}</small><div class="plan-choice">${choices}</div></div><button class="plan-remove" type="button" data-remove="${escapeHtml(item.id)}" data-remove-term="${term}" aria-label="Remove ${escapeHtml(course.title)} from ${term}" title="Remove">×</button></div>`;
+      return `<div class="plan-item${item.pinned ? ' is-pinned' : ''}"><div><a href="${escapeHtml(course.url)}" target="_blank" rel="noopener">${escapeHtml(course.title)} ↗</a><small class="plan-meta">${item.credits} cr · ${escapeHtml(course.modes?.[term] || 'Format TBA')} · ${escapeHtml(compactMeetingTimes(course, term))}</small><div class="plan-choice">${choices}</div></div><button class="plan-remove" type="button" data-remove="${escapeHtml(item.id)}" data-remove-term="${term}" aria-label="Remove ${escapeHtml(course.title)} from ${term}" title="Remove">×</button></div>`;
     }).join('') : '<p class="plan-term-empty">Nothing chosen yet</p>'}${replacementHtml}</section>`;
   }).join('');
   renderFinalReview(plan);

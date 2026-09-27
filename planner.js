@@ -38,6 +38,59 @@ export function courseConflict(a, b, term) {
   return (a.meetings?.[term] || []).some(x => (b.meetings?.[term] || []).some(y => meetingsOverlap(x, y)));
 }
 
+function clockTime(minute, showMeridiem = true) {
+  const hour = Math.floor(minute / 60);
+  const minutes = minute % 60;
+  return `${hour % 12 || 12}${minutes ? `:${String(minutes).padStart(2, '0')}` : ''}${showMeridiem ? hour >= 12 ? 'pm' : 'am' : ''}`;
+}
+
+function timeRange(start, end) {
+  const sameMeridiem = (start < 720) === (end < 720);
+  return `${clockTime(start, !sameMeridiem)}–${clockTime(end)}`;
+}
+
+function weekRange(weeks) {
+  const sorted = [...new Set(weeks)].sort((a, b) => a - b);
+  const ranges = [];
+  for (const week of sorted) {
+    const last = ranges.at(-1);
+    if (last && week === last[1] + 1) last[1] = week;
+    else ranges.push([week, week]);
+  }
+  return ranges.map(([start, end]) => start === end ? String(start) : `${start}–${end}`).join(', ');
+}
+
+const DAY_ORDER = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const SHORT_DAY = { Mon: 'M', Tue: 'Tu', Wed: 'W', Thu: 'Th', Fri: 'F', Sat: 'Sa', Sun: 'Su' };
+
+export function compactMeetingTimes(course, term) {
+  const meetings = course.meetings?.[term] || [];
+  if (!meetings.length) return 'Meeting times not published';
+  const groups = new Map();
+  for (const meeting of meetings) {
+    const key = `${meeting.start}-${meeting.end}`;
+    if (!groups.has(key)) groups.set(key, { start: meeting.start, end: meeting.end, days: new Set() });
+    groups.get(key).days.add(meeting.day);
+  }
+  return [...groups.values()]
+    .sort((a, b) => Math.min(...[...a.days].map(day => DAY_ORDER.indexOf(day))) - Math.min(...[...b.days].map(day => DAY_ORDER.indexOf(day))) || a.start - b.start)
+    .map(group => `${[...group.days].sort((a, b) => DAY_ORDER.indexOf(a) - DAY_ORDER.indexOf(b)).map(day => SHORT_DAY[day] || day).join('/')} ${timeRange(group.start, group.end)}`)
+    .join(' · ');
+}
+
+function overlapTimes(a, b, term) {
+  const details = new Set();
+  for (const left of a.meetings?.[term] || []) {
+    for (const right of b.meetings?.[term] || []) {
+      if (!meetingsOverlap(left, right)) continue;
+      const weeks = left.weeks && right.weeks ? left.weeks.filter(week => right.weeks.includes(week)) : null;
+      const weekText = weeks?.length ? ` (week${weeks.length === 1 ? '' : 's'} ${weekRange(weeks)})` : '';
+      details.add(`${left.day} ${timeRange(Math.max(left.start, right.start), Math.min(left.end, right.end))}${weekText}`);
+    }
+  }
+  return [...details];
+}
+
 export function planIssues(plan, courses, target) {
   const byId = new Map(courses.map(course => [course.id, course]));
   const issues = [];
@@ -53,7 +106,8 @@ export function planIssues(plan, courses, target) {
       if (a.prerequisites && !/^none\b|^no prerequisites/i.test(a.prerequisites)) issues.push({ term, kind: "unknown", text: `${a.title}: check the entry requirements on the official listing.` });
       for (let j = i + 1; j < entries.length; j++) {
         const b = byId.get(entries[j].id);
-        if (courseConflict(a, b, term)) issues.push({ term, kind: "clash", text: `${term}: ${a.title} and ${b.title} have overlapping published meetings.` });
+        const overlaps = overlapTimes(a, b, term);
+        if (overlaps.length) issues.push({ term, kind: "clash", text: `${term}: ${a.title} and ${b.title} overlap on ${overlaps.join('; ')}.` });
       }
     }
   }

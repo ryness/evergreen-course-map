@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { courseConflict, offeringAvailable, planIssues, reviewPlan, TERMS } from '../planner.js';
+import { compactMeetingTimes, courseConflict, offeringAvailable, planIssues, reviewPlan, TERMS } from '../planner.js';
 import { THEMES, courseAlreadyTaken, courseRelevance, replacementSuggestions, spinQuarterPlan, suggestThemePlan } from '../recommend.js';
 
 const meeting = (day, start, end, weeks = [1, 2, 3]) => ({ day, start, end, weeks });
@@ -32,6 +32,24 @@ test('schedule conflicts require overlapping days, times, and weeks', () => {
   assert.equal(courseConflict(a, b, 'Fall'), true);
   b.meetings.Fall[0].day = 'Tue';
   assert.equal(courseConflict(a, b, 'Fall'), false);
+});
+
+test('quarter cards show every distinct published meeting block in a compact form', () => {
+  const course = makeCourse('a', 'Studio', 8, [
+    meeting('Mon', 600, 720), meeting('Wed', 600, 720), meeting('Fri', 600, 720),
+    meeting('Tue', 780, 890), meeting('Thu', 780, 890),
+  ]);
+  assert.equal(compactMeetingTimes(course, 'Fall'), 'M/W/F 10am–12pm · Tu/Th 1–2:50pm');
+  assert.equal(compactMeetingTimes(course, 'Winter'), 'Meeting times not published');
+});
+
+test('final review names each actual overlap and its shared weeks', () => {
+  const a = makeCourse('a', 'Seminar', 8, [meeting('Mon', 600, 720, [1, 2, 3]), meeting('Wed', 780, 900, [2, 3])]);
+  const b = makeCourse('b', 'Workshop', 4, [meeting('Mon', 660, 780, [2, 3, 4]), meeting('Wed', 840, 960, [3, 4])]);
+  const review = reviewPlan({ Fall: [{ id: 'a', credits: 8 }, { id: 'b', credits: 4 }] }, [a, b], prefs);
+  const conflict = review.blockers.find(item => item.kind === 'clash');
+  assert.match(conflict.text, /Mon 11am–12pm \(weeks 2–3\)/);
+  assert.match(conflict.text, /Wed 2–3pm \(week 3\)/);
 });
 
 test('plan review flags credit overload and actual conflicts', () => {

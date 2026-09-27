@@ -189,7 +189,7 @@ function suggestionEligible(course, prefs) {
   return !courseAlreadyTaken(course, prefs.completedCourses);
 }
 
-function suggestQuarter(courses, prefs, term, themeId, initial = [], previousTitles = new Set(), avoidIds = new Set()) {
+function suggestQuarter(courses, prefs, term, themeId, initial = [], previousTitles = new Set(), avoidIds = new Set(), options = {}) {
   const lookup = new Map(courses.map(course => [course.id, course]));
   const input = profile(prefs);
   const pool = courses.filter(course => suggestionEligible(course, prefs) && offeringAvailable(course, term, prefs));
@@ -197,27 +197,36 @@ function suggestQuarter(courses, prefs, term, themeId, initial = [], previousTit
   const seenTitles = new Set(previousTitles);
   for (const item of selected) seenTitles.add(item.course.title.toLowerCase());
   let remaining = prefs.target - initial.reduce((sum, item) => sum + Number(item.credits), 0);
-  while (remaining >= 2 && selected.length < 6) {
+  let added = 0;
+  while (remaining >= 2 && selected.length < (options.maxCourses || 6)) {
     let best = null;
+    const preferredCredits = Math.min(remaining, options.creditTargets?.[Math.min(added, options.creditTargets.length - 1)] ?? remaining);
+    const selectedTags = new Set(selected.flatMap(item => primaryTags(item.course)));
     for (const course of pool) {
-      if (avoidIds.has(course.id) || selected.some(item => item.course.id === course.id)) continue;
+      if (selected.some(item => item.course.id === course.id)) continue;
+      if (options.excludeAvoided && avoidIds.has(course.id)) continue;
       if (themeId !== 'core' && seenTitles.has(course.title.toLowerCase())) continue;
       if (!fitsTheme(course, themeId)) continue;
       if (selected.some(item => courseConflict(item.course, course, term))) continue;
       for (const credits of course.credits.filter(n => n <= remaining)) {
+        if (options.maxCredits && credits > options.maxCredits) continue;
         if (themeId === 'breadth' && credits > 8) continue;
         const core = matchScore(course, input);
         const focusWeight = ({ core: 0.5, breadth: 0.18, practice: 0.2, career: 0.3, creative: 0.2, civic: 0.22, inquiry: 0.18, discovery: 0.1 })[themeId];
         const score = core * focusWeight - avoidanceScore(course, input) + themeBonus(course, term, themeId, credits, selected, seenTitles, input)
           + credits / prefs.target * (themeId === 'breadth' ? 4 : 7)
           + (selected.length === 0 && themeId === 'core' && credits >= 12 ? 8 : 0)
-          - (credits <= 2 ? 3 : 0);
+          - (credits <= 2 ? 3 : 0)
+          - (options.creditTargets ? Math.abs(credits - preferredCredits) * 25 : 0)
+          - (avoidIds.has(course.id) ? 110 : 0)
+          + (options.diversityBonus || 0) * primaryTags(course).filter(tag => !selectedTags.has(tag)).length;
         if (!best || score > best.score || (score === best.score && course.title.localeCompare(best.course.title) < 0)) best = { course, credits, score };
       }
     }
     if (!best) break;
     selected.push(best);
     remaining -= best.credits;
+    added++;
     if (themeId !== 'core' || (best.course.type === 'Program' && best.credits >= 12)) seenTitles.add(best.course.title.toLowerCase());
   }
   const knownIds = new Set(selected.map(item => item.course.id));
@@ -242,7 +251,7 @@ export function suggestThemePlan(courses, prefs, themeId, existingPlan = {}) {
   return plan;
 }
 
-export function spinQuarterPlan(courses, prefs, plan, term, themeId = 'core') {
+export function spinQuarterPlan(courses, prefs, plan, term, themeId = 'core', spinIndex = 0) {
   const current = plan[term] || [];
   const pinned = current.filter(item => item.pinned);
   const previous = new Set(current.filter(item => !item.pinned).map(item => item.id));
@@ -250,9 +259,20 @@ export function spinQuarterPlan(courses, prefs, plan, term, themeId = 'core') {
   const otherTitles = new Set(TERMS.filter(other => other !== term)
     .flatMap(other => (plan[other] || []).map(item => lookup.get(item.id)?.title.toLowerCase()).filter(Boolean)));
   const theme = THEMES.some(item => item.id === themeId) ? themeId : 'core';
-  let spun = suggestQuarter(courses, prefs, term, theme, pinned, otherTitles, previous);
-  const credits = spun.reduce((sum, item) => sum + Number(item.credits), 0);
-  if (credits < prefs.target) spun = suggestQuarter(courses, prefs, term, theme, spun, otherTitles);
+  const gap = Math.max(0, prefs.target - pinned.reduce((sum, item) => sum + Number(item.credits), 0));
+  const shapes = [
+    { maxCredits: Math.max(4, Math.ceil(gap / 2)), creditTargets: [Math.ceil(gap / 2)] },
+    { maxCredits: Math.max(4, Math.min(8, gap)), creditTargets: [4, 8, 4], diversityBonus: 6 },
+    { maxCredits: Math.min(4, gap), creditTargets: [4], diversityBonus: 4 },
+    { maxCredits: Math.max(4, gap - 4), creditTargets: [gap - 4, 4] },
+    { maxCredits: gap, creditTargets: [gap] },
+  ];
+  const shape = { ...shapes[Math.abs(spinIndex) % shapes.length], maxCourses: 8 };
+  const total = items => items.reduce((sum, item) => sum + Number(item.credits), 0);
+  let spun = suggestQuarter(courses, prefs, term, theme, pinned, otherTitles, previous, shape);
+  if (total(spun) < prefs.target) spun = suggestQuarter(courses, prefs, term, theme, spun, otherTitles, new Set(), shape);
+  if (total(spun) < prefs.target) spun = suggestQuarter(courses, prefs, term, theme, spun, otherTitles, previous, { maxCourses: 8, excludeAvoided: true });
+  if (total(spun) < prefs.target) spun = suggestQuarter(courses, prefs, term, theme, spun, otherTitles, new Set(), { maxCourses: 8 });
   return spun;
 }
 

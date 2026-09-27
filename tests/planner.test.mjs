@@ -120,6 +120,33 @@ test('New spin changes a quarter while keeping pinned courses and respecting con
   assert.deepEqual(plan.Fall, [{ id: 'pinned', credits: 4, pinned: true }, { id: 'old', credits: 8 }]);
 });
 
+test('successive spins explore several credit mixes around a pinned four-credit course', () => {
+  const courses = [
+    makeCourse('pinned', 'Policy Writing', 4, [meeting('Mon', 600, 720)]),
+    makeCourse('large', 'Civic Law', 16, [meeting('Tue', 600, 720)], { type: 'Program' }),
+    makeCourse('twelve', 'Politics and Public Service', 12, [meeting('Wed', 600, 720)]),
+    makeCourse('eight-a', 'Legal History', 8, [meeting('Thu', 600, 720)]),
+    makeCourse('eight-b', 'Community Advocacy', 8, [meeting('Fri', 600, 720)]),
+    makeCourse('four-a', 'Literature Seminar', 4, [meeting('Tue', 900, 1020)]),
+    makeCourse('four-b', 'Music Workshop', 4, [meeting('Wed', 900, 1020)]),
+    makeCourse('four-c', 'Civic Research', 4, [meeting('Thu', 900, 1020)]),
+    makeCourse('four-d', 'Creative Writing', 4, [meeting('Fri', 900, 1020)]),
+    makeCourse('clash', 'Law and Politics', 8, [meeting('Mon', 660, 780)]),
+  ];
+  let plan = { Fall: [{ id: 'pinned', credits: 4, pinned: true }, { id: 'large', credits: 16 }], Winter: [], Spring: [] };
+  const expected = [[8, 8], [4, 4, 8], [4, 4, 4, 4], [4, 12], [16]];
+  for (let spin = 0; spin < expected.length; spin++) {
+    plan = { ...plan, Fall: spinQuarterPlan(courses, prefs, plan, 'Fall', 'core', spin) };
+    assert.deepEqual(plan.Fall.filter(item => !item.pinned).map(item => item.credits).sort((a, b) => a - b), expected[spin]);
+    assert.deepEqual(plan.Fall.find(item => item.id === 'pinned'), { id: 'pinned', credits: 4, pinned: true });
+    assert.equal(plan.Fall.reduce((sum, item) => sum + item.credits, 0), 20);
+    assert.ok(!plan.Fall.some(item => item.id === 'clash'));
+    for (let i = 0; i < plan.Fall.length; i++) for (let j = i + 1; j < plan.Fall.length; j++) {
+      assert.equal(courseConflict(courses.find(course => course.id === plan.Fall[i].id), courses.find(course => course.id === plan.Fall[j].id), 'Fall'), false);
+    }
+  }
+});
+
 test('disliked academic fields lower ranking without hiding courses', () => {
   const math = makeCourse('math', 'Civic Mathematics', 16, [], { type: 'Program', fields: ['Mathematics'] });
   const literature = makeCourse('lit', 'Civic Literature', 16, [], { type: 'Program', fields: ['Literature'] });

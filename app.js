@@ -1,12 +1,12 @@
 import { TERMS, STANDINGS, FORMATS, INTERESTS, offeringAvailable, reviewPlan } from './planner.js?v=20260927-final-review';
-import { THEMES, courseRelevance, courseAlreadyTaken, suggestThemePlan, spinQuarterPlan, replacementSuggestions } from './recommend.js?v=20260927-new-spins';
+import { THEMES, courseRelevance, courseAlreadyTaken, suggestThemePlan, spinQuarterPlan, replacementSuggestions } from './recommend.js?v=20260927-varied-spins';
 
 const COOKIE = 'evergreen-course-map-v1';
 const EXCLUDED_COOKIE = 'evergreen-course-map-excluded-v1';
 const $ = id => document.getElementById(id);
 const emptyPlan = () => Object.fromEntries(TERMS.map(term => [term, []]));
 const defaults = { academicYear: '', standing: 'Freshman', target: 16, location: 'Any location', careerGoals: '', academicFocus: '', otherInterests: '', dislikedFields: '', completedCourses: '', formats: [...FORMATS] };
-const state = { prefs: { ...defaults }, plans: {}, themes: {}, excluded: {}, compare: [], replacement: null, term: 'Fall', query: '', creditFilter: 0, sort: 'relevance', visible: 18, data: null, manifest: null };
+const state = { prefs: { ...defaults }, plans: {}, themes: {}, spins: {}, excluded: {}, compare: [], replacement: null, term: 'Fall', query: '', creditFilter: 0, sort: 'relevance', visible: 18, data: null, manifest: null };
 let toastTimer, goalsTimer, suggestionsTimer;
 
 function readCookie() {
@@ -29,6 +29,10 @@ function readCookie() {
     };
     if (data.plans && typeof data.plans === 'object') state.plans = data.plans;
     if (data.themes && typeof data.themes === 'object') state.themes = data.themes;
+    if (data.spins && typeof data.spins === 'object') for (const [year, counts] of Object.entries(data.spins)) {
+      if (counts && typeof counts === 'object') state.spins[year] = Object.fromEntries(TERMS.map(term =>
+        [term, Number.isSafeInteger(counts[term]) && counts[term] >= 0 ? counts[term] : 0]));
+    }
     if (Array.isArray(data.compare)) state.compare = data.compare.filter(item => item && typeof item.id === 'string' && TERMS.includes(item.term)).slice(0, 3);
     if (Number.isInteger(data.creditFilter) && data.creditFilter > 0) state.creditFilter = data.creditFilter;
   } catch { /* An old or malformed cookie should not stop the planner. */ }
@@ -46,7 +50,7 @@ function readExcludedCookie() {
 }
 
 function save() {
-  const value = encodeURIComponent(JSON.stringify({ prefs: state.prefs, plans: state.plans, themes: state.themes, compare: state.compare, creditFilter: state.creditFilter }));
+  const value = encodeURIComponent(JSON.stringify({ prefs: state.prefs, plans: state.plans, themes: state.themes, spins: state.spins, compare: state.compare, creditFilter: state.creditFilter }));
   const excludedValue = encodeURIComponent(JSON.stringify(state.excluded));
   const path = location.pathname.replace(/[^/]*$/, '') || '/';
   document.cookie = `${COOKIE}=${value}; Max-Age=31536000; Path=${path}; SameSite=Lax${location.protocol === 'https:' ? '; Secure' : ''}`;
@@ -193,7 +197,7 @@ function renderPlan() {
   const activeTheme = state.themes[state.prefs.academicYear] || 'custom';
   $('theme').innerHTML = '<option value="custom">Choose a theme or build your own</option>' + THEMES.map(theme => `<option value="${theme.id}">${escapeHtml(theme.label)}</option>`).join('');
   $('theme').value = activeTheme;
-  $('theme-hint').textContent = (THEMES.find(theme => theme.id === activeTheme)?.hint || 'A theme fills your draft with ideas. You can change every choice afterward.') + ' Yes for me courses stay put until you remove them with ×.';
+  $('theme-hint').textContent = (THEMES.find(theme => theme.id === activeTheme)?.hint || 'A theme fills your draft with ideas. You can change every choice afterward.') + ' New spin explores different credit mixes. Yes for me courses stay put until you remove them with ×.';
   $('nav-count').textContent = planCount();
   $('plan-total').textContent = `${planCount()} ${planCount() === 1 ? 'course' : 'courses'}`;
   $('plan-terms').innerHTML = TERMS.map(term => {
@@ -390,11 +394,13 @@ function events() {
       const plan = currentPlan();
       const before = (plan[term] || []).map(item => `${item.id}:${item.credits}`).join('|');
       const theme = state.themes[state.prefs.academicYear] || 'core';
-      plan[term] = spinQuarterPlan(catalog(), recommendationPrefs(), plan, term, theme);
+      const spins = state.spins[state.prefs.academicYear] ||= {};
+      plan[term] = spinQuarterPlan(catalog(), recommendationPrefs(), plan, term, theme, spins[term] || 0);
+      spins[term] = (spins[term] || 0) + 1;
       const after = plan[term].map(item => `${item.id}:${item.credits}`).join('|');
       state.replacement = null;
       save(); renderCourses(); renderPlan();
-      notify(before === after ? `No different compatible ${term.toLowerCase()} mix was found.` : `A new ${term.toLowerCase()} mix is ready. Your Yes for me courses stayed put.`);
+      notify(before === after ? `No different compatible ${term.toLowerCase()} mix was found.` : `New ${term.toLowerCase()} mix: ${plan[term].map(item => item.credits).join(' + ')} credits. Your Yes for me courses stayed put.`);
       return;
     }
     const pin = event.target.closest('[data-pin-id]');
@@ -456,7 +462,7 @@ function events() {
     state.prefs = { ...defaults, formats: [...FORMATS], academicYear: state.manifest.catalogs[0].academicYear };
     state.plans = Object.fromEntries(Object.entries(state.plans).map(([year, plan]) =>
       [year, Object.fromEntries(TERMS.map(term => [term, (plan[term] || []).filter(item => item.pinned)]))]));
-    state.themes = {}; state.excluded = {}; state.replacement = null; state.compare = [];
+    state.themes = {}; state.spins = {}; state.excluded = {}; state.replacement = null; state.compare = [];
     state.term = 'Fall'; state.query = ''; state.creditFilter = 0;
     $('search').value = ''; $('sort').value = 'relevance'; state.sort = 'relevance'; state.visible = 18;
     syncGoalInputs(); save();

@@ -1,5 +1,5 @@
 import { TERMS, STANDINGS, FORMATS, INTERESTS, offeringAvailable, reviewPlan } from './planner.js?v=20260927-final-review';
-import { THEMES, courseRelevance, courseAlreadyTaken, suggestThemePlan, replacementSuggestions } from './recommend.js?v=20260927-final-review';
+import { THEMES, courseRelevance, courseAlreadyTaken, suggestThemePlan, spinQuarterPlan, replacementSuggestions } from './recommend.js?v=20260927-new-spins';
 
 const COOKIE = 'evergreen-course-map-v1';
 const EXCLUDED_COOKIE = 'evergreen-course-map-excluded-v1';
@@ -65,9 +65,25 @@ function notify(message) {
 function catalog() { return state.data?.courses || []; }
 function byId() { return new Map(catalog().map(course => [course.id, course])); }
 function currentPlan() { return state.plans[state.prefs.academicYear] || emptyPlan(); }
+function isPinned(id, term) { return (currentPlan()[term] || []).some(item => item.id === id && item.pinned); }
+function isPinnedAnywhere(id) { return TERMS.some(term => isPinned(id, term)); }
 function excludedIds() { return state.excluded[state.prefs.academicYear] || []; }
 function recommendationPrefs() { return { ...state.prefs, excludedCourseIds: excludedIds() }; }
 function planCount() { return TERMS.reduce((n, term) => n + (currentPlan()[term] || []).length, 0); }
+function pinCourse(id, term, credits) {
+  const course = byId().get(id);
+  if (!course || !TERMS.includes(term) || !course.credits.includes(credits)) return;
+  const plan = currentPlan();
+  const existing = (plan[term] || []).find(item => item.id === id);
+  if (existing?.pinned) return;
+  if (existing) existing.pinned = true;
+  else plan[term].push({ id, credits, pinned: true });
+  const theme = state.themes[state.prefs.academicYear];
+  if (theme && theme !== 'custom') state.plans[state.prefs.academicYear] = suggestThemePlan(catalog(), recommendationPrefs(), theme, plan);
+  state.replacement = null;
+  save(); render();
+  notify(`${course.title} is saved as Yes for me in ${term}.`);
+}
 function matchingCourses() {
   const excluded = new Set(excludedIds());
   return catalog().filter(course => !excluded.has(course.id) && offeringAvailable(course, state.term, state.prefs))
@@ -120,7 +136,9 @@ function renderCompare() {
     const course = lookup.get(item.id);
     const schedule = scheduleText(course, item.term) || 'Check official schedule';
     const fields = (course.fields || []).slice(0, 3).join(' · ');
-    return `<article class="compare-card"><div class="compare-card-head"><span class="pill gold">${item.term}</span><button type="button" data-uncompare="${escapeHtml(item.id)}" data-uncompare-term="${item.term}" aria-label="Remove ${escapeHtml(course.title)} from comparison">×</button></div><h4>${escapeHtml(course.title)}</h4><div class="compare-facts"><div><span>Credits</span><strong>${escapeHtml(course.credits.join(' or '))}</strong></div><div><span>Format</span><strong>${escapeHtml(course.modes?.[item.term] || 'TBA')}</strong></div><div><span>Location</span><strong>${escapeHtml(course.location || 'See listing')}</strong></div><div><span>Meeting</span><strong>${escapeHtml(schedule)}</strong></div></div><p class="compare-fields">${escapeHtml(fields)}</p><p class="compare-desc">${escapeHtml((course.description || '').slice(0, 420) || 'Read the official listing for course details.')}${(course.description || '').length > 420 ? '…' : ''}</p>${course.prerequisites && !/^none\b|^no prerequisites/i.test(course.prerequisites) ? '<p class="compare-caution">Entry requirements: check the official listing.</p>' : ''}<div class="compare-end"><a href="${escapeHtml(course.url)}" target="_blank" rel="noopener">Read official listing ↗</a><button type="button" data-exclude="${escapeHtml(course.id)}" aria-label="Exclude ${escapeHtml(course.title)} from suggestions">Not for me</button></div></article>`;
+    const pinned = isPinned(item.id, item.term);
+    const choices = `<div class="compare-choices">${pinned ? '<span class="choice-locked">✓ Yes for me</span>' : `<button class="choice-pin" type="button" data-pin-id="${escapeHtml(item.id)}" data-pin-term="${item.term}">Yes for me</button>`}${isPinnedAnywhere(item.id) ? '' : `<button type="button" data-exclude="${escapeHtml(course.id)}" aria-label="Exclude ${escapeHtml(course.title)} from suggestions">Not for me</button>`}</div>`;
+    return `<article class="compare-card"><div class="compare-card-head"><span class="pill gold">${item.term}</span><button type="button" data-uncompare="${escapeHtml(item.id)}" data-uncompare-term="${item.term}" aria-label="Remove ${escapeHtml(course.title)} from comparison">×</button></div><h4>${escapeHtml(course.title)}</h4><div class="compare-facts"><div><span>Credits</span><strong>${escapeHtml(course.credits.join(' or '))}</strong></div><div><span>Format</span><strong>${escapeHtml(course.modes?.[item.term] || 'TBA')}</strong></div><div><span>Location</span><strong>${escapeHtml(course.location || 'See listing')}</strong></div><div><span>Meeting</span><strong>${escapeHtml(schedule)}</strong></div></div><p class="compare-fields">${escapeHtml(fields)}</p><p class="compare-desc">${escapeHtml((course.description || '').slice(0, 420) || 'Read the official listing for course details.')}${(course.description || '').length > 420 ? '…' : ''}</p>${course.prerequisites && !/^none\b|^no prerequisites/i.test(course.prerequisites) ? '<p class="compare-caution">Entry requirements: check the official listing.</p>' : ''}<div class="compare-end"><a href="${escapeHtml(course.url)}" target="_blank" rel="noopener">Read official listing ↗</a>${choices}</div></article>`;
   }).join('') + (state.compare.length < 2 ? '<div class="compare-placeholder">Choose another course to compare it here.</div>' : '');
 }
 
@@ -134,6 +152,7 @@ function renderCourses() {
   const shown = results.slice(0, state.visible);
   $('course-list').innerHTML = shown.length ? shown.map(course => {
     const inPlan = (currentPlan()[state.term] || []).some(item => item.id === course.id);
+    const pinned = isPinned(course.id, state.term);
     const comparing = state.compare.some(item => item.id === course.id && item.term === state.term);
     const availableCredits = course.credits;
     const preferred = state.creditFilter && availableCredits.includes(state.creditFilter) ? state.creditFilter : availableCredits.filter(n => n <= state.prefs.target).at(-1) ?? availableCredits[0];
@@ -144,7 +163,8 @@ function renderCourses() {
     const offeredTerms = TERMS.filter(term => offeringAvailable(course, term, state.prefs));
     const otherTerms = offeredTerms.filter(term => term !== state.term);
     const status = course.offerings?.[state.term]?.status || '';
-    return `<article class="course-card" data-course="${escapeHtml(course.id)}"><div class="course-top"><a class="course-title" href="${escapeHtml(course.url)}" target="_blank" rel="noopener">${escapeHtml(course.title)} ↗</a><button class="exclude-button" type="button" data-exclude="${escapeHtml(course.id)}" aria-label="Exclude ${escapeHtml(course.title)} from suggestions">Not for me</button></div><div class="course-meta"><span class="pill gold">${escapeHtml(course.type)}</span><span class="pill">${escapeHtml(mode)}</span><span class="pill neutral">${escapeHtml(course.credits.join(' or '))} cr</span>${alreadyTaken ? '<span class="pill taken">Listed as already taken</span>' : ''}${location ? `<span class="pill neutral">${escapeHtml(location)}</span>` : ''}${otherTerms.length ? `<span class="pill neutral">Also ${escapeHtml(otherTerms.join(' + '))}</span>` : ''}${status === 'Conditional' ? '<span class="pill gold">Conditional entry</span>' : ''}${course.prerequisites && !/^none\b|^no prerequisites/i.test(course.prerequisites) ? '<span class="pill gold">Entry requirements</span>' : ''}</div><p class="course-desc">${escapeHtml(course.description || (course.fields || []).join(' · ') || 'Read the official catalog entry for course details.')}</p>${schedule ? `<p class="course-extra">Meets ${escapeHtml(schedule)}${course.timeOffered ? ` · ${escapeHtml(course.timeOffered)}` : ''}</p>` : '<p class="course-extra">Meeting times: see official schedule</p>'}<div class="course-actions"><div class="course-links"><a href="${escapeHtml(course.scheduleUrl || course.url)}" target="_blank" rel="noopener">${course.scheduleUrl ? 'Full schedule' : 'Catalog details'} ↗</a><button class="compare-button" type="button" data-compare="${course.id}">${comparing ? 'Remove comparison' : 'Compare'}</button></div><div class="credit-picker"><label for="credits-${course.id}">Credits</label><select id="credits-${course.id}" data-credit-for="${course.id}">${availableCredits.map(n => `<option value="${n}" ${n === preferred ? 'selected' : ''}>${n}</option>`).join('')}</select><button class="add-button" type="button" data-add="${course.id}" ${inPlan ? 'disabled' : ''}>${inPlan ? 'Added' : `Add to ${state.term}`}</button></div></div>${otherTerms.length ? `<button type="button" class="add-all" data-add-all="${course.id}">Add ${escapeHtml(offeredTerms.join(' + '))}</button>` : ''}</article>`;
+    const choices = `<div class="course-choice-actions">${pinned ? '<span class="choice-locked">✓ Yes for me</span>' : `<button class="choice-pin" type="button" data-pin-id="${escapeHtml(course.id)}" data-pin-term="${state.term}">Yes for me</button>`}${isPinnedAnywhere(course.id) ? '' : `<button class="exclude-button" type="button" data-exclude="${escapeHtml(course.id)}" aria-label="Exclude ${escapeHtml(course.title)} from suggestions">Not for me</button>`}</div>`;
+    return `<article class="course-card" data-course="${escapeHtml(course.id)}"><div class="course-top"><a class="course-title" href="${escapeHtml(course.url)}" target="_blank" rel="noopener">${escapeHtml(course.title)} ↗</a>${choices}</div><div class="course-meta"><span class="pill gold">${escapeHtml(course.type)}</span><span class="pill">${escapeHtml(mode)}</span><span class="pill neutral">${escapeHtml(course.credits.join(' or '))} cr</span>${alreadyTaken ? '<span class="pill taken">Listed as already taken</span>' : ''}${location ? `<span class="pill neutral">${escapeHtml(location)}</span>` : ''}${otherTerms.length ? `<span class="pill neutral">Also ${escapeHtml(otherTerms.join(' + '))}</span>` : ''}${status === 'Conditional' ? '<span class="pill gold">Conditional entry</span>' : ''}${course.prerequisites && !/^none\b|^no prerequisites/i.test(course.prerequisites) ? '<span class="pill gold">Entry requirements</span>' : ''}</div><p class="course-desc">${escapeHtml(course.description || (course.fields || []).join(' · ') || 'Read the official catalog entry for course details.')}</p>${schedule ? `<p class="course-extra">Meets ${escapeHtml(schedule)}${course.timeOffered ? ` · ${escapeHtml(course.timeOffered)}` : ''}</p>` : '<p class="course-extra">Meeting times: see official schedule</p>'}<div class="course-actions"><div class="course-links"><a href="${escapeHtml(course.scheduleUrl || course.url)}" target="_blank" rel="noopener">${course.scheduleUrl ? 'Full schedule' : 'Catalog details'} ↗</a><button class="compare-button" type="button" data-compare="${course.id}">${comparing ? 'Remove comparison' : 'Compare'}</button></div><div class="credit-picker"><label for="credits-${course.id}">Credits</label><select id="credits-${course.id}" data-credit-for="${course.id}">${availableCredits.map(n => `<option value="${n}" ${n === preferred ? 'selected' : ''}>${n}</option>`).join('')}</select><button class="add-button" type="button" data-add="${course.id}" ${inPlan ? 'disabled' : ''}>${inPlan ? 'Added' : `Add to ${state.term}`}</button></div></div>${otherTerms.length ? `<button type="button" class="add-all" data-add-all="${course.id}">Add ${escapeHtml(offeredTerms.join(' + '))}</button>` : ''}</article>`;
   }).join('') : `<div class="empty-state"><strong>No courses match this view.</strong><br>Try another quarter, credit value, format, or search phrase.</div>`;
   $('load-more').hidden = results.length <= state.visible;
   $('load-more').textContent = `Show more courses (${results.length - state.visible} remaining)`;
@@ -173,7 +193,7 @@ function renderPlan() {
   const activeTheme = state.themes[state.prefs.academicYear] || 'custom';
   $('theme').innerHTML = '<option value="custom">Choose a theme or build your own</option>' + THEMES.map(theme => `<option value="${theme.id}">${escapeHtml(theme.label)}</option>`).join('');
   $('theme').value = activeTheme;
-  $('theme-hint').textContent = THEMES.find(theme => theme.id === activeTheme)?.hint || 'A theme fills your draft with ideas. You can change every choice afterward.';
+  $('theme-hint').textContent = (THEMES.find(theme => theme.id === activeTheme)?.hint || 'A theme fills your draft with ideas. You can change every choice afterward.') + ' Yes for me courses stay put until you remove them with ×.';
   $('nav-count').textContent = planCount();
   $('plan-total').textContent = `${planCount()} ${planCount() === 1 ? 'course' : 'courses'}`;
   $('plan-terms').innerHTML = TERMS.map(term => {
@@ -183,12 +203,13 @@ function renderPlan() {
     const removed = replacing ? lookup.get(state.replacement.id) : null;
     const suggestions = replacing ? replacementSuggestions(catalog(), recommendationPrefs(), plan, term, state.replacement, state.replacement.themeId || activeTheme) : [];
     const remaining = state.prefs.target - sum;
-    const replacementItem = ({course, credits, reason}) => `<div class="replacement-item"><div><a href="${escapeHtml(course.url)}" target="_blank" rel="noopener">${escapeHtml(course.title)} ↗</a><small>${escapeHtml(reason)} · ${escapeHtml(course.modes?.[term] || 'Format TBA')}</small></div><div class="replacement-actions"><button class="replacement-exclude" type="button" data-exclude="${escapeHtml(course.id)}" aria-label="Exclude ${escapeHtml(course.title)} from suggestions">Not for me</button><label class="sr-only" for="replace-credits-${escapeHtml(course.id)}">Credits for ${escapeHtml(course.title)}</label><select id="replace-credits-${escapeHtml(course.id)}" data-replacement-credit="${escapeHtml(course.id)}">${course.credits.map(n => `<option value="${n}" ${n === credits ? 'selected' : ''}>${n} cr</option>`).join('')}</select><button type="button" data-replace-id="${escapeHtml(course.id)}" data-replace-term="${term}">Add</button></div></div>`;
+    const replacementItem = ({course, credits, reason}) => `<div class="replacement-item"><div><a href="${escapeHtml(course.url)}" target="_blank" rel="noopener">${escapeHtml(course.title)} ↗</a><small>${escapeHtml(reason)} · ${escapeHtml(course.modes?.[term] || 'Format TBA')}</small></div><div class="replacement-actions"><button class="replacement-exclude" type="button" data-exclude="${escapeHtml(course.id)}" aria-label="Exclude ${escapeHtml(course.title)} from suggestions">Not for me</button><button class="replacement-pin choice-pin" type="button" data-pin-id="${escapeHtml(course.id)}" data-pin-term="${term}">Yes for me</button><label class="sr-only" for="replace-credits-${escapeHtml(course.id)}">Credits for ${escapeHtml(course.title)}</label><select id="replace-credits-${escapeHtml(course.id)}" data-replacement-credit="${escapeHtml(course.id)}">${course.credits.map(n => `<option value="${n}" ${n === credits ? 'selected' : ''}>${n} cr</option>`).join('')}</select><button type="button" data-replace-id="${escapeHtml(course.id)}" data-replace-term="${term}">Add</button></div></div>`;
     const moreSuggestions = suggestions.slice(3);
     const replacementHtml = replacing ? `<div class="replacement-panel"><div class="replacement-head"><strong>Try another ${term.toLowerCase()} course</strong><small>${removed ? `After removing ${escapeHtml(removed.title)} · ` : ''}${remaining > 0 ? `${remaining} credits to reach your target` : 'Quarter target reached'} · ranked by credit fit and interests</small></div>${suggestions.length ? `<div class="replacement-list">${suggestions.slice(0, 3).map(replacementItem).join('')}</div>${moreSuggestions.length ? `<details class="replacement-more"><summary>Show ${moreSuggestions.length} more options</summary><div class="replacement-list">${moreSuggestions.map(replacementItem).join('')}</div></details>` : ''}` : '<p class="replacement-empty">No clear matches with these filters. Browse the full quarter to choose one yourself.</p>'}<button type="button" class="browse-quarter" data-browse-term="${term}">Browse all ${term.toLowerCase()} offerings ↓</button></div>` : '';
-    return `<section class="plan-term"><div class="plan-term-head"><span>${term}</span><span>${sum} / ${state.prefs.target} credits</span></div><progress max="${state.prefs.target}" value="${Math.min(sum,state.prefs.target)}" aria-label="${term} credits"></progress>${entries.length ? entries.map(item => {
+    return `<section class="plan-term"><div class="plan-term-head"><div><span>${term}</span><small>${sum} / ${state.prefs.target} credits</small></div><button class="new-spin" type="button" data-spin-term="${term}" aria-label="New ${term} course combination">↻ New spin</button></div><progress max="${state.prefs.target}" value="${Math.min(sum,state.prefs.target)}" aria-label="${term} credits"></progress>${entries.length ? entries.map(item => {
       const course = lookup.get(item.id);
-      return `<div class="plan-item"><div><a href="${escapeHtml(course.url)}" target="_blank" rel="noopener">${escapeHtml(course.title)} ↗</a><small>${item.credits} credits · ${escapeHtml(course.modes?.[term] || 'Format TBA')}</small><button class="plan-exclude" type="button" data-exclude="${escapeHtml(course.id)}" data-exclude-term="${term}" aria-label="Exclude ${escapeHtml(course.title)} from suggestions">Not for me</button></div><button type="button" data-remove="${escapeHtml(item.id)}" data-remove-term="${term}" aria-label="Remove ${escapeHtml(course.title)} from ${term}" title="Remove">×</button></div>`;
+      const choices = item.pinned ? '<span class="choice-locked">✓ Yes for me</span>' : `<button class="plan-pin choice-pin" type="button" data-pin-id="${escapeHtml(item.id)}" data-pin-term="${term}">Yes for me</button><button class="plan-exclude" type="button" data-exclude="${escapeHtml(course.id)}" data-exclude-term="${term}" aria-label="Exclude ${escapeHtml(course.title)} from suggestions">Not for me</button>`;
+      return `<div class="plan-item${item.pinned ? ' is-pinned' : ''}"><div><a href="${escapeHtml(course.url)}" target="_blank" rel="noopener">${escapeHtml(course.title)} ↗</a><small>${item.credits} credits · ${escapeHtml(course.modes?.[term] || 'Format TBA')}</small><div class="plan-choice">${choices}</div></div><button class="plan-remove" type="button" data-remove="${escapeHtml(item.id)}" data-remove-term="${term}" aria-label="Remove ${escapeHtml(course.title)} from ${term}" title="Remove">×</button></div>`;
     }).join('') : '<p class="plan-term-empty">Nothing chosen yet</p>'}${replacementHtml}</section>`;
   }).join('');
   renderFinalReview(plan);
@@ -198,7 +219,7 @@ function render() { if (!state.data) return; renderControls(); renderCompare(); 
 function updatePrefs() {
   state.visible = 18;
   const theme = state.themes[state.prefs.academicYear];
-  if (theme && theme !== 'custom') state.plans[state.prefs.academicYear] = suggestThemePlan(catalog(), recommendationPrefs(), theme);
+  if (theme && theme !== 'custom') state.plans[state.prefs.academicYear] = suggestThemePlan(catalog(), recommendationPrefs(), theme, currentPlan());
   state.replacement = null;
   save(); render();
 }
@@ -206,6 +227,7 @@ function updatePrefs() {
 function excludeCourse(id, preferredTerm = state.term) {
   const course = byId().get(id);
   if (!course || excludedIds().includes(id)) return;
+  if (isPinnedAnywhere(id)) { notify('Remove this Yes for me course with the red × before excluding it.'); return; }
   const year = state.prefs.academicYear;
   (state.excluded[year] ||= []).push(id);
   const theme = state.themes[year] || 'custom';
@@ -215,7 +237,7 @@ function excludeCourse(id, preferredTerm = state.term) {
   const removedItem = removedTerm ? plan[removedTerm].find(item => item.id === id) : null;
   for (const term of TERMS) plan[term] = (plan[term] || []).filter(item => item.id !== id);
   if (theme !== 'custom') {
-    state.plans[year] = suggestThemePlan(catalog(), recommendationPrefs(), theme);
+    state.plans[year] = suggestThemePlan(catalog(), recommendationPrefs(), theme, plan);
     state.replacement = null;
   } else if (removedTerm) {
     state.replacement = { term: removedTerm, id, credits: removedItem.credits, themeId: 'custom' };
@@ -230,7 +252,7 @@ function restoreCourse(id) {
   if (!excludedIds().includes(id)) return;
   state.excluded[year] = excludedIds().filter(item => item !== id);
   const theme = state.themes[year] || 'custom';
-  if (theme !== 'custom') state.plans[year] = suggestThemePlan(catalog(), recommendationPrefs(), theme);
+  if (theme !== 'custom') state.plans[year] = suggestThemePlan(catalog(), recommendationPrefs(), theme, currentPlan());
   save(); render();
   notify('Course restored to your choices.');
 }
@@ -296,7 +318,7 @@ function events() {
     const id = event.target.value;
     if (id !== 'custom' && !THEMES.some(theme => theme.id === id)) return;
     state.themes[state.prefs.academicYear] = id;
-    if (id !== 'custom') state.plans[state.prefs.academicYear] = suggestThemePlan(catalog(), recommendationPrefs(), id);
+    if (id !== 'custom') state.plans[state.prefs.academicYear] = suggestThemePlan(catalog(), recommendationPrefs(), id, currentPlan());
     state.replacement = null;
     save(); renderCourses(); renderPlan();
     if (id !== 'custom') notify(`${THEMES.find(theme => theme.id === id).label} added to your draft.`);
@@ -311,10 +333,78 @@ function events() {
     const id = event.target.closest('[data-restore]')?.dataset.restore;
     if (id) restoreCourse(id);
   });
-  $('course-list').addEventListener('click', event => { const exclude = event.target.closest('[data-exclude]')?.dataset.exclude; if (exclude) { excludeCourse(exclude); return; } const compareId = event.target.closest('[data-compare]')?.dataset.compare; if (compareId) { const existing = state.compare.findIndex(item => item.id === compareId && item.term === state.term); if (existing >= 0) state.compare.splice(existing, 1); else { if (state.compare.length >= 3) { notify('Compare up to three offerings at a time.'); return; } state.compare.push({ id: compareId, term: state.term }); } save(); renderCompare(); renderCourses(); if (existing < 0) $('compare').scrollIntoView({ behavior:'smooth', block:'start' }); return; } const all = event.target.closest('[data-add-all]'); const id = all?.dataset.addAll || event.target.closest('[data-add]')?.dataset.add; if (!id) return; const course = byId().get(id); const credits = Number(document.querySelector(`[data-credit-for="${id}"]`)?.value); if (!course || !course.credits.includes(credits)) return; const plan = currentPlan(); const terms = all ? TERMS.filter(term => offeringAvailable(course, term, state.prefs)) : [state.term]; for (const term of terms) if (!(plan[term] || []).some(item => item.id === id)) plan[term].push({ id, credits }); state.themes[state.prefs.academicYear] = 'custom'; state.replacement = null; save(); renderCourses(); renderPlan(); notify(all ? 'Added across its offered quarters.' : `Added to ${state.term}.`); });
-  $('compare-grid').addEventListener('click', event => { const exclude = event.target.closest('[data-exclude]')?.dataset.exclude; if (exclude) { excludeCourse(exclude); return; } const button = event.target.closest('[data-uncompare]'); if (!button) return; state.compare = state.compare.filter(item => !(item.id === button.dataset.uncompare && item.term === button.dataset.uncompareTerm)); save(); renderCompare(); renderCourses(); });
+  $('course-list').addEventListener('click', event => {
+    const pin = event.target.closest('[data-pin-id]');
+    if (pin) {
+      const id = pin.dataset.pinId;
+      pinCourse(id, pin.dataset.pinTerm || state.term, Number(document.querySelector(`[data-credit-for="${id}"]`)?.value));
+      return;
+    }
+    const exclude = event.target.closest('[data-exclude]')?.dataset.exclude;
+    if (exclude) { excludeCourse(exclude); return; }
+    const compareId = event.target.closest('[data-compare]')?.dataset.compare;
+    if (compareId) {
+      const existing = state.compare.findIndex(item => item.id === compareId && item.term === state.term);
+      if (existing >= 0) state.compare.splice(existing, 1);
+      else {
+        if (state.compare.length >= 3) { notify('Compare up to three offerings at a time.'); return; }
+        state.compare.push({ id: compareId, term: state.term });
+      }
+      save(); renderCompare(); renderCourses();
+      if (existing < 0) $('compare').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+    const all = event.target.closest('[data-add-all]');
+    const id = all?.dataset.addAll || event.target.closest('[data-add]')?.dataset.add;
+    if (!id) return;
+    const course = byId().get(id);
+    const credits = Number(document.querySelector(`[data-credit-for="${id}"]`)?.value);
+    if (!course || !course.credits.includes(credits)) return;
+    const plan = currentPlan();
+    const terms = all ? TERMS.filter(term => offeringAvailable(course, term, state.prefs)) : [state.term];
+    for (const term of terms) if (!(plan[term] || []).some(item => item.id === id)) plan[term].push({ id, credits });
+    state.themes[state.prefs.academicYear] = 'custom'; state.replacement = null;
+    save(); renderCourses(); renderPlan();
+    notify(all ? 'Added across its offered quarters.' : `Added to ${state.term}.`);
+  });
+  $('compare-grid').addEventListener('click', event => {
+    const pin = event.target.closest('[data-pin-id]');
+    if (pin) {
+      const course = byId().get(pin.dataset.pinId);
+      const credits = course?.credits.filter(n => n <= state.prefs.target).at(-1) ?? course?.credits[0];
+      pinCourse(pin.dataset.pinId, pin.dataset.pinTerm, credits);
+      return;
+    }
+    const exclude = event.target.closest('[data-exclude]')?.dataset.exclude;
+    if (exclude) { excludeCourse(exclude); return; }
+    const button = event.target.closest('[data-uncompare]');
+    if (!button) return;
+    state.compare = state.compare.filter(item => !(item.id === button.dataset.uncompare && item.term === button.dataset.uncompareTerm));
+    save(); renderCompare(); renderCourses();
+  });
   $('clear-compare').addEventListener('click', () => { state.compare = []; save(); renderCompare(); renderCourses(); });
   $('plan-terms').addEventListener('click', event => {
+    const spin = event.target.closest('[data-spin-term]');
+    if (spin) {
+      const term = spin.dataset.spinTerm;
+      const plan = currentPlan();
+      const before = (plan[term] || []).map(item => `${item.id}:${item.credits}`).join('|');
+      const theme = state.themes[state.prefs.academicYear] || 'core';
+      plan[term] = spinQuarterPlan(catalog(), recommendationPrefs(), plan, term, theme);
+      const after = plan[term].map(item => `${item.id}:${item.credits}`).join('|');
+      state.replacement = null;
+      save(); renderCourses(); renderPlan();
+      notify(before === after ? `No different compatible ${term.toLowerCase()} mix was found.` : `A new ${term.toLowerCase()} mix is ready. Your Yes for me courses stayed put.`);
+      return;
+    }
+    const pin = event.target.closest('[data-pin-id]');
+    if (pin) {
+      const id = pin.dataset.pinId, term = pin.dataset.pinTerm;
+      const existing = (currentPlan()[term] || []).find(item => item.id === id);
+      const credits = existing?.credits ?? Number(pin.closest('.replacement-item')?.querySelector('[data-replacement-credit]')?.value);
+      pinCourse(id, term, credits);
+      return;
+    }
     const exclude = event.target.closest('[data-exclude]')?.dataset.exclude;
     if (exclude) { excludeCourse(exclude, event.target.closest('[data-exclude]').dataset.excludeTerm || state.replacement?.term || state.term); return; }
     const remove = event.target.closest('[data-remove]');
@@ -334,7 +424,7 @@ function events() {
     if (replace) {
       const id = replace.dataset.replaceId, term = replace.dataset.replaceTerm;
       const course = byId().get(id);
-      const credits = Number(document.querySelector(`[data-replacement-credit="${id}"]`)?.value);
+      const credits = Number(replace.closest('.replacement-item')?.querySelector('[data-replacement-credit]')?.value);
       if (!course?.credits.includes(credits) || (currentPlan()[term] || []).some(item => item.id === id)) return;
       currentPlan()[term].push({ id, credits });
       state.themes[state.prefs.academicYear] = 'custom'; state.replacement = null;
@@ -348,8 +438,32 @@ function events() {
       $('explore').scrollIntoView({ behavior:'smooth', block:'start' });
     }
   });
-  $('clear-plan').addEventListener('click', () => { state.plans[state.prefs.academicYear] = emptyPlan(); state.themes[state.prefs.academicYear] = 'custom'; state.replacement = null; save(); renderCourses(); renderPlan(); notify('Draft plan cleared.'); });
-  $('reset').addEventListener('click', () => { clearTimeout(goalsTimer); clearTimeout(suggestionsTimer); const button = $('generate-suggestions'); button.disabled = false; button.removeAttribute('aria-busy'); $('generate-suggestions-label').textContent = 'Generate relevant course suggestions'; $('suggestion-status').textContent = 'Course matches also adjust automatically as you edit your answers.'; const path = location.pathname.replace(/[^/]*$/, '') || '/'; document.cookie = `${COOKIE}=; Max-Age=0; Path=${path}; SameSite=Lax`; document.cookie = `${EXCLUDED_COOKIE}=; Max-Age=0; Path=${path}; SameSite=Lax`; state.prefs = { ...defaults, formats: [...FORMATS], academicYear: state.manifest.catalogs[0].academicYear }; state.plans = {}; state.themes = {}; state.excluded = {}; state.replacement = null; state.compare = []; state.term = 'Fall'; state.query = ''; state.creditFilter = 0; $('search').value = ''; $('sort').value = 'relevance'; state.sort = 'relevance'; state.visible = 18; syncGoalInputs(); if (state.data.academicYear === state.prefs.academicYear) render(); else loadYear(state.prefs.academicYear); notify('Saved choices cleared.'); });
+  $('clear-plan').addEventListener('click', () => {
+    state.plans[state.prefs.academicYear] = Object.fromEntries(TERMS.map(term =>
+      [term, (currentPlan()[term] || []).filter(item => item.pinned)]));
+    state.themes[state.prefs.academicYear] = 'custom'; state.replacement = null;
+    save(); renderCourses(); renderPlan(); notify('Other courses cleared. Your Yes for me choices remain.');
+  });
+  $('reset').addEventListener('click', () => {
+    clearTimeout(goalsTimer); clearTimeout(suggestionsTimer);
+    const button = $('generate-suggestions');
+    button.disabled = false; button.removeAttribute('aria-busy');
+    $('generate-suggestions-label').textContent = 'Generate relevant course suggestions';
+    $('suggestion-status').textContent = 'Course matches also adjust automatically as you edit your answers.';
+    const path = location.pathname.replace(/[^/]*$/, '') || '/';
+    document.cookie = `${COOKIE}=; Max-Age=0; Path=${path}; SameSite=Lax`;
+    document.cookie = `${EXCLUDED_COOKIE}=; Max-Age=0; Path=${path}; SameSite=Lax`;
+    state.prefs = { ...defaults, formats: [...FORMATS], academicYear: state.manifest.catalogs[0].academicYear };
+    state.plans = Object.fromEntries(Object.entries(state.plans).map(([year, plan]) =>
+      [year, Object.fromEntries(TERMS.map(term => [term, (plan[term] || []).filter(item => item.pinned)]))]));
+    state.themes = {}; state.excluded = {}; state.replacement = null; state.compare = [];
+    state.term = 'Fall'; state.query = ''; state.creditFilter = 0;
+    $('search').value = ''; $('sort').value = 'relevance'; state.sort = 'relevance'; state.visible = 18;
+    syncGoalInputs(); save();
+    if (state.data.academicYear === state.prefs.academicYear) render();
+    else loadYear(state.prefs.academicYear);
+    notify('Other choices reset. Your Yes for me courses remain.');
+  });
   $('copy-plan').addEventListener('click', async () => { const lookup = byId(); const lines = [`Evergreen Course Mapper — ${state.prefs.academicYear}`]; for (const term of TERMS) { const entries = currentPlan()[term] || []; lines.push(`\n${term} (${entries.reduce((n,x)=>n+Number(x.credits),0)} credits)`); entries.forEach(item => { const c = lookup.get(item.id); if (c) lines.push(`• ${c.title} — ${item.credits} credits — ${c.url}`); }); } lines.push('\nCheck official course listings before enrolling.'); try { await navigator.clipboard.writeText(lines.join('\n')); notify('Plan summary copied.'); } catch { notify('Clipboard unavailable in this browser.'); } });
 }
 

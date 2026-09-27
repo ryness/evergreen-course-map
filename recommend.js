@@ -189,41 +189,71 @@ function suggestionEligible(course, prefs) {
   return !courseAlreadyTaken(course, prefs.completedCourses);
 }
 
-export function suggestThemePlan(courses, prefs, themeId) {
-  const plan = Object.fromEntries(TERMS.map(term => [term, []]));
-  if (!THEMES.some(theme => theme.id === themeId)) return plan;
+function suggestQuarter(courses, prefs, term, themeId, initial = [], previousTitles = new Set(), avoidIds = new Set()) {
+  const lookup = new Map(courses.map(course => [course.id, course]));
   const input = profile(prefs);
+  const pool = courses.filter(course => suggestionEligible(course, prefs) && offeringAvailable(course, term, prefs));
+  const selected = initial.map(item => ({ ...item, course: lookup.get(item.id) })).filter(item => item.course);
+  const seenTitles = new Set(previousTitles);
+  for (const item of selected) seenTitles.add(item.course.title.toLowerCase());
+  let remaining = prefs.target - initial.reduce((sum, item) => sum + Number(item.credits), 0);
+  while (remaining >= 2 && selected.length < 6) {
+    let best = null;
+    for (const course of pool) {
+      if (avoidIds.has(course.id) || selected.some(item => item.course.id === course.id)) continue;
+      if (themeId !== 'core' && seenTitles.has(course.title.toLowerCase())) continue;
+      if (!fitsTheme(course, themeId)) continue;
+      if (selected.some(item => courseConflict(item.course, course, term))) continue;
+      for (const credits of course.credits.filter(n => n <= remaining)) {
+        if (themeId === 'breadth' && credits > 8) continue;
+        const core = matchScore(course, input);
+        const focusWeight = ({ core: 0.5, breadth: 0.18, practice: 0.2, career: 0.3, creative: 0.2, civic: 0.22, inquiry: 0.18, discovery: 0.1 })[themeId];
+        const score = core * focusWeight - avoidanceScore(course, input) + themeBonus(course, term, themeId, credits, selected, seenTitles, input)
+          + credits / prefs.target * (themeId === 'breadth' ? 4 : 7)
+          + (selected.length === 0 && themeId === 'core' && credits >= 12 ? 8 : 0)
+          - (credits <= 2 ? 3 : 0);
+        if (!best || score > best.score || (score === best.score && course.title.localeCompare(best.course.title) < 0)) best = { course, credits, score };
+      }
+    }
+    if (!best) break;
+    selected.push(best);
+    remaining -= best.credits;
+    if (themeId !== 'core' || (best.course.type === 'Program' && best.credits >= 12)) seenTitles.add(best.course.title.toLowerCase());
+  }
+  const knownIds = new Set(selected.map(item => item.course.id));
+  const missingPinned = initial.filter(item => item.pinned && !knownIds.has(item.id));
+  return [...missingPinned, ...selected.map(item => item.pinned
+    ? { id: item.course.id, credits: item.credits, pinned: true }
+    : { id: item.course.id, credits: item.credits })];
+}
+
+export function suggestThemePlan(courses, prefs, themeId, existingPlan = {}) {
+  const plan = Object.fromEntries(TERMS.map(term => [term, (existingPlan[term] || []).filter(item => item.pinned)]));
+  if (!THEMES.some(theme => theme.id === themeId)) return plan;
+  const lookup = new Map(courses.map(course => [course.id, course]));
   const previousTitles = new Set();
   for (const term of TERMS) {
-    const pool = courses.filter(course => suggestionEligible(course, prefs) && offeringAvailable(course, term, prefs));
-    const selected = [];
-    let remaining = prefs.target;
-    while (remaining >= 2 && selected.length < 6) {
-      let best = null;
-      for (const course of pool) {
-        if (selected.some(item => item.course.id === course.id)) continue;
-        if (themeId !== 'core' && previousTitles.has(course.title.toLowerCase())) continue;
-        if (!fitsTheme(course, themeId)) continue;
-        if (selected.some(item => courseConflict(item.course, course, term))) continue;
-        for (const credits of course.credits.filter(n => n <= remaining)) {
-          if (themeId === 'breadth' && credits > 8) continue;
-          const core = matchScore(course, input);
-          const focusWeight = ({ core: 0.5, breadth: 0.18, practice: 0.2, career: 0.3, creative: 0.2, civic: 0.22, inquiry: 0.18, discovery: 0.1 })[themeId];
-          const score = core * focusWeight - avoidanceScore(course, input) + themeBonus(course, term, themeId, credits, selected, previousTitles, input)
-            + credits / prefs.target * (themeId === 'breadth' ? 4 : 7)
-            + (selected.length === 0 && themeId === 'core' && credits >= 12 ? 8 : 0)
-            - (credits <= 2 ? 3 : 0);
-          if (!best || score > best.score || (score === best.score && course.title.localeCompare(best.course.title) < 0)) best = { course, credits, score };
-        }
-      }
-      if (!best) break;
-      selected.push(best);
-      remaining -= best.credits;
-      if (themeId !== 'core' || (best.course.type === 'Program' && best.credits >= 12)) previousTitles.add(best.course.title.toLowerCase());
+    plan[term] = suggestQuarter(courses, prefs, term, themeId, plan[term], previousTitles);
+    for (const item of plan[term]) {
+      const course = lookup.get(item.id);
+      if (course && (themeId !== 'core' || (course.type === 'Program' && item.credits >= 12))) previousTitles.add(course.title.toLowerCase());
     }
-    plan[term] = selected.map(item => ({ id: item.course.id, credits: item.credits }));
   }
   return plan;
+}
+
+export function spinQuarterPlan(courses, prefs, plan, term, themeId = 'core') {
+  const current = plan[term] || [];
+  const pinned = current.filter(item => item.pinned);
+  const previous = new Set(current.filter(item => !item.pinned).map(item => item.id));
+  const lookup = new Map(courses.map(course => [course.id, course]));
+  const otherTitles = new Set(TERMS.filter(other => other !== term)
+    .flatMap(other => (plan[other] || []).map(item => lookup.get(item.id)?.title.toLowerCase()).filter(Boolean)));
+  const theme = THEMES.some(item => item.id === themeId) ? themeId : 'core';
+  let spun = suggestQuarter(courses, prefs, term, theme, pinned, otherTitles, previous);
+  const credits = spun.reduce((sum, item) => sum + Number(item.credits), 0);
+  if (credits < prefs.target) spun = suggestQuarter(courses, prefs, term, theme, spun, otherTitles);
+  return spun;
 }
 
 export function replacementSuggestions(courses, prefs, plan, term, removed, themeId = 'custom', limit = 8) {

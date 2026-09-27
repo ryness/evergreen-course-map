@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { courseConflict, offeringAvailable, planIssues, reviewPlan, TERMS } from '../planner.js';
-import { THEMES, courseAlreadyTaken, courseRelevance, replacementSuggestions, suggestThemePlan } from '../recommend.js';
+import { THEMES, courseAlreadyTaken, courseRelevance, replacementSuggestions, spinQuarterPlan, suggestThemePlan } from '../recommend.js';
 
 const meeting = (day, start, end, weeks = [1, 2, 3]) => ({ day, start, end, weeks });
 const makeCourse = (id, title, credits, meetings, extra = {}) => ({
@@ -94,6 +94,30 @@ test('excluded courses are omitted from generated themes', () => {
   const plan = suggestThemePlan(courses, { ...prefs, excludedCourseIds: ['a'] }, 'core');
   assert.ok(plan.Fall.every(item => item.id !== 'a'));
   assert.ok(plan.Fall.some(item => item.id === 'b'));
+});
+
+test('theme changes keep Yes for me courses and build around their meeting times', () => {
+  const pinned = makeCourse('pinned', 'Civic Writing', 4, [meeting('Tue', 600, 720)]);
+  const compatible = makeCourse('compatible', 'Community Law', 8, [meeting('Wed', 600, 720)]);
+  const clash = makeCourse('clash', 'Legal Writing', 8, [meeting('Tue', 660, 780)]);
+  const existing = { Fall: [{ id: 'pinned', credits: 4, pinned: true }, { id: 'clash', credits: 8 }], Winter: [], Spring: [] };
+  const updated = suggestThemePlan([pinned, compatible, clash], { ...prefs, target: 12 }, 'breadth', existing);
+  assert.deepEqual(updated.Fall, [{ id: 'pinned', credits: 4, pinned: true }, { id: 'compatible', credits: 8 }]);
+  assert.equal(existing.Fall[1].id, 'clash');
+});
+
+test('New spin changes a quarter while keeping pinned courses and respecting constraints', () => {
+  const pinned = makeCourse('pinned', 'Civic Writing', 4, [meeting('Tue', 600, 720)]);
+  const old = makeCourse('old', 'Legal History', 8, [meeting('Mon', 600, 720)]);
+  const alternative = makeCourse('alternative', 'Public Policy Workshop', 8, [meeting('Wed', 600, 720)]);
+  const clash = makeCourse('clash', 'Writing Lab', 8, [meeting('Tue', 660, 780)]);
+  const completed = makeCourse('completed', 'Psychology Seminar', 8, [meeting('Thu', 600, 720)]);
+  const remote = makeCourse('remote', 'Public Service', 8, [], { modes: { Fall: 'Remote' } });
+  const courses = [pinned, old, alternative, clash, completed, remote];
+  const plan = { Fall: [{ id: 'pinned', credits: 4, pinned: true }, { id: 'old', credits: 8 }], Winter: [], Spring: [] };
+  const spun = spinQuarterPlan(courses, { ...prefs, target: 12, completedCourses: 'Psychology Seminar' }, plan, 'Fall', 'core');
+  assert.deepEqual(spun, [{ id: 'pinned', credits: 4, pinned: true }, { id: 'alternative', credits: 8 }]);
+  assert.deepEqual(plan.Fall, [{ id: 'pinned', credits: 4, pinned: true }, { id: 'old', credits: 8 }]);
 });
 
 test('disliked academic fields lower ranking without hiding courses', () => {

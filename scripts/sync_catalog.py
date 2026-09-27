@@ -230,6 +230,12 @@ def main():
     if len(failures) > max(8, len(courses) // 20):
         raise RuntimeError(f"Too many missing details ({len(failures)}); not publishing a partial refresh")
     enriched.sort(key=lambda c: (c["title"].casefold(), c["id"]))
+    existing_path = ROOT / "data" / f"catalog-{year_label}.json"
+    if existing_path.exists() and (ROOT / "data" / "manifest.json").exists():
+        existing = json.loads(existing_path.read_text())
+        if existing.get("courses") == enriched and existing.get("catalogUrl") == f"{CATALOG}/catalog/index?year={year_id}":
+            print(f"No offering changes in {year_label}; keeping the existing snapshot", flush=True)
+            return
     payload = {"academicYear": year_label, "updatedAt": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"), "catalogUrl": f"{CATALOG}/catalog/index?year={year_id}", "courses": enriched}
     data_dir = ROOT / "data"
     data_dir.mkdir(exist_ok=True)

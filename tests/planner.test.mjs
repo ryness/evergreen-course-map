@@ -57,10 +57,15 @@ test('path suggestions avoid special-entry courses and fit each quarter', () => 
 });
 
 test('published catalog has unique, linked undergraduate offerings', () => {
-  const snapshot = JSON.parse(readFileSync(new URL('../data/catalog-2026-27.json', import.meta.url)));
+  const manifest = JSON.parse(readFileSync(new URL('../data/manifest.json', import.meta.url)));
+  const latest = manifest.catalogs[0];
+  const snapshot = JSON.parse(readFileSync(new URL(`../data/${latest.file}`, import.meta.url)));
+  assert.equal(snapshot.academicYear, latest.academicYear);
   assert.ok(snapshot.courses.length >= 400);
   assert.equal(new Set(snapshot.courses.map(course => course.id)).size, snapshot.courses.length);
   assert.ok(snapshot.courses.every(course => course.url.startsWith('https://www.evergreen.edu/catalog/offering/')));
-  assert.ok(snapshot.courses.some(course => /Street Level Democracy/.test(course.title)));
-  assert.ok(snapshot.courses.some(course => /Supreme Court/.test(course.title)));
+  if (snapshot.academicYear === '2026-27') {
+    assert.ok(snapshot.courses.some(course => /Street Level Democracy/.test(course.title)));
+    assert.ok(snapshot.courses.some(course => /Supreme Court/.test(course.title)));
+  }
 });

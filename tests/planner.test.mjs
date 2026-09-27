@@ -59,6 +59,16 @@ test('eight themes avoid completed and special-entry courses while fitting each 
   }
 });
 
+test('excluded courses are omitted from generated themes', () => {
+  const courses = [
+    makeCourse('a', 'Community Law', 16, [], { type: 'Program' }),
+    makeCourse('b', 'Public Writing', 4, []),
+  ];
+  const plan = suggestThemePlan(courses, { ...prefs, excludedCourseIds: ['a'] }, 'core');
+  assert.ok(plan.Fall.every(item => item.id !== 'a'));
+  assert.ok(plan.Fall.some(item => item.id === 'b'));
+});
+
 test('completed titles match conservatively and do not conflate course sequences', () => {
   assert.equal(courseAlreadyTaken(makeCourse('x','Introduction to Psychology',4,[]), 'Intro to Psych'), true);
   assert.equal(courseAlreadyTaken(makeCourse('y','Statistics II',4,[]), 'Statistics I'), false);
@@ -77,6 +87,8 @@ test('replacement suggestions respect quarter, formats, conflicts, prior classes
   assert.ok(found.some(item=>item.course.id==='b'));
   assert.ok(found.some(item=>item.course.id==='c'));
   assert.ok(found.every(item=>!['a','d','e','f'].includes(item.course.id)));
+  const filtered = replacementSuggestions([selected,good,large,clash,completed,winter],{...prefs,target:4,completedCourses:'Intro to Psych',excludedCourseIds:['b']},plan,'Fall',{id:'old',credits:4});
+  assert.ok(filtered.every(item => item.course.id !== 'b'));
 });
 
 test('published catalog has unique, linked undergraduate offerings', () => {

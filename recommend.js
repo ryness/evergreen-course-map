@@ -157,6 +157,7 @@ function themeBonus(course, term, themeId, credits, selected, previousTitles, in
 
 function suggestionEligible(course, prefs) {
   if (!['Course', 'Program'].includes(course.type)) return false;
+  if (prefs.excludedCourseIds?.includes(course.id)) return false;
   if (/prior learning|pre-orientation|independent study|undergraduate research|study abroad|^TRIO\b|^ECE Lyceum|^Lyceum:/i.test(course.title)) return false;
   if (course.prerequisites && !/^(none\b|no prerequisites)/i.test(course.prerequisites)) return false;
   if (prefs.location && prefs.location !== 'Any location' && course.location !== prefs.location) return false;

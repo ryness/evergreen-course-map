@@ -25,3 +25,5 @@
 @media(max-width:620px){.course-top{flex-wrap:wrap}.replacement-actions{flex-wrap:wrap;justify-content:flex-end}}
 .compare-end{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}.compare-end button{border:0;background:transparent;color:#8b4e3e;font-size:.78rem;font-weight:700;text-decoration:underline;text-underline-offset:2px;padding:3px}.compare-end button:hover{color:#b66e55}
 .goal-card-wide{grid-column:1/-1}.goal-card-wide>span:not(.goal-number){min-height:0}
+.browse-filters{display:flex;justify-content:flex-end;align-items:center;gap:12px;flex-wrap:wrap}.browse-filters .sort-control{justify-self:auto}.browse-filters select{max-width:140px}
+@media(max-width:620px){.browse-filters{justify-content:flex-start}}

@@ -1,4 +1,4 @@
-import { TERMS, INTERESTS, offeringAvailable, courseConflict } from './planner.js?v=20260927-avoid-fields';
+import { TERMS, INTERESTS, offeringAvailable, courseConflict } from './planner.js?v=20260927-credit-fit';
 
 export const THEMES = [
   { id: 'core', label: 'Deep in my core academic interest', hint: 'Substantial interdisciplinary programs centered on your main subject.' },
@@ -230,26 +230,31 @@ export function replacementSuggestions(courses, prefs, plan, term, removed, them
   const lookup = new Map(courses.map(course => [course.id, course]));
   const selected = (plan[term] || []).map(item => lookup.get(item.id)).filter(Boolean);
   const total = (plan[term] || []).reduce((sum, item) => sum + Number(item.credits), 0);
-  const room = prefs.target - total;
+  const room = Math.max(0, prefs.target - total);
   const input = profile(prefs);
+  const hasGoals = Boolean(prefs.academicFocus?.trim() || prefs.careerGoals?.trim() || prefs.otherInterests?.trim());
   const removedCourse = lookup.get(removed?.id);
   const removedTags = removedCourse ? primaryTags(removedCourse) : [];
   const ranked = courses.filter(course => suggestionEligible(course, prefs) && offeringAvailable(course, term, prefs)
       && course.id !== removed?.id && !selected.some(item => item.id === course.id)
       && !selected.some(item => courseConflict(item, course, term)))
     .map(course => {
-      const options = [...course.credits].sort((a, b) => {
-        const rank = n => (n <= room ? 8 : 0) - Math.abs(n - (removed?.credits || Math.max(room, 4))) * 0.55;
-        return rank(b) - rank(a);
-      });
+      const creditDistance = n => Math.abs(n - room) + (n > room ? 4 : 0);
+      const options = [...course.credits].sort((a, b) => creditDistance(a) - creditDistance(b) || b - a);
       const credits = options[0];
+      const distance = creditDistance(credits);
       const overlap = primaryTags(course).filter(tag => removedTags.includes(tag)).length;
-      const score = matchScore(course, input) - avoidanceScore(course, input) + themeBonus(course, term, themeId, credits, [], new Set(), input) * 0.55
-        + overlap * 4 + (credits <= room ? 9 : 0)
-        - Math.abs(credits - (removed?.credits || Math.max(room, 4))) * 0.5;
-      const reason = overlap ? 'Related subject' : courseRelevance(course, prefs) > 8 ? 'Matches your goals' : credits <= room ? 'Fits your credit target' : 'More credits to consider';
-      return { course, credits, score, reason };
+      const interestScore = matchScore(course, input) - avoidanceScore(course, input);
+      const pertinent = interestScore >= 8 || (!hasGoals && interestScore >= 0);
+      const fitBand = distance <= 4 ? 0 : distance <= 8 ? 1 : 2;
+      const tier = fitBand === 2 ? 3 : fitBand === 0 && pertinent ? 0 : fitBand === 0 || pertinent ? 1 : 2;
+      const score = interestScore * 0.4 + themeBonus(course, term, themeId, credits, [], new Set(), input) * 0.2
+        + overlap * 5 - distance * 8;
+      const gap = Math.abs(room - credits);
+      const fitText = credits === room ? `Fills ${room}-credit gap` : `${gap} ${gap === 1 ? 'credit' : 'credits'} ${credits < room ? 'below' : 'above'} target`;
+      const reason = `${hasGoals && pertinent ? 'Matches your interests' : overlap ? 'Related subject' : 'Another option'} · ${fitText}`;
+      return { course, credits, tier, score, reason };
     });
-  ranked.sort((a, b) => b.score - a.score || a.course.title.localeCompare(b.course.title));
+  ranked.sort((a, b) => a.tier - b.tier || b.score - a.score || a.course.title.localeCompare(b.course.title));
   return ranked.slice(0, limit);
 }

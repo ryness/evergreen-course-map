@@ -104,6 +104,24 @@ test('replacement suggestions respect quarter, formats, conflicts, prior classes
   assert.ok(filtered.every(item => item.course.id !== 'b'));
 });
 
+test('replacement suggestions prioritize the remaining credit gap and relevant interests', () => {
+  const courses = [
+    makeCourse('exact-relevant', 'Civic Writing', 8, []),
+    makeCourse('near-relevant', 'Legal Writing', 4, []),
+    makeCourse('exact-unrelated', 'Botany', 8, []),
+    makeCourse('far-relevant', 'Law and Society', 16, []),
+    makeCourse('far-unrelated', 'Ecology', 16, []),
+    makeCourse('flexible', 'Public Policy', 4, [], { credits: [4, 8] }),
+  ];
+  const plan = { Fall: [{ id: 'existing', credits: 12 }], Winter: [], Spring: [] };
+  const found = replacementSuggestions(courses, prefs, plan, 'Fall', { id: 'removed', credits: 4 }, 'custom', 20);
+  assert.equal(found.find(item => item.course.id === 'flexible').credits, 8);
+  assert.ok(found.findIndex(item => item.course.id === 'exact-relevant') < found.findIndex(item => item.course.id === 'exact-unrelated'));
+  assert.ok(found.findIndex(item => item.course.id === 'near-relevant') < found.findIndex(item => item.course.id === 'far-relevant'));
+  assert.ok(found.findIndex(item => item.course.id === 'exact-unrelated') < found.findIndex(item => item.course.id === 'far-unrelated'));
+  assert.match(found[0].reason, /credit|target/);
+});
+
 test('published catalog has unique, linked undergraduate offerings', () => {
   const manifest = JSON.parse(readFileSync(new URL('../data/manifest.json', import.meta.url)));
   const latest = manifest.catalogs[0];

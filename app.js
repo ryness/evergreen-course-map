@@ -1,12 +1,12 @@
-import { TERMS, STANDINGS, FORMATS, INTERESTS, offeringAvailable, planIssues } from './planner.js?v=20260927-avoid-fields';
-import { THEMES, courseRelevance, courseAlreadyTaken, suggestThemePlan, replacementSuggestions } from './recommend.js?v=20260927-avoid-fields';
+import { TERMS, STANDINGS, FORMATS, INTERESTS, offeringAvailable, planIssues } from './planner.js?v=20260927-credit-fit';
+import { THEMES, courseRelevance, courseAlreadyTaken, suggestThemePlan, replacementSuggestions } from './recommend.js?v=20260927-credit-fit';
 
 const COOKIE = 'evergreen-course-map-v1';
 const EXCLUDED_COOKIE = 'evergreen-course-map-excluded-v1';
 const $ = id => document.getElementById(id);
 const emptyPlan = () => Object.fromEntries(TERMS.map(term => [term, []]));
 const defaults = { academicYear: '', standing: 'Freshman', target: 16, location: 'Any location', careerGoals: '', academicFocus: '', otherInterests: '', dislikedFields: '', completedCourses: '', formats: [...FORMATS] };
-const state = { prefs: { ...defaults }, plans: {}, themes: {}, excluded: {}, compare: [], replacement: null, term: 'Fall', query: '', sort: 'relevance', visible: 18, data: null, manifest: null };
+const state = { prefs: { ...defaults }, plans: {}, themes: {}, excluded: {}, compare: [], replacement: null, term: 'Fall', query: '', creditFilter: 0, sort: 'relevance', visible: 18, data: null, manifest: null };
 let toastTimer, goalsTimer;
 
 function readCookie() {
@@ -30,6 +30,7 @@ function readCookie() {
     if (data.plans && typeof data.plans === 'object') state.plans = data.plans;
     if (data.themes && typeof data.themes === 'object') state.themes = data.themes;
     if (Array.isArray(data.compare)) state.compare = data.compare.filter(item => item && typeof item.id === 'string' && TERMS.includes(item.term)).slice(0, 3);
+    if (Number.isInteger(data.creditFilter) && data.creditFilter > 0) state.creditFilter = data.creditFilter;
   } catch { /* An old or malformed cookie should not stop the planner. */ }
 }
 
@@ -45,7 +46,7 @@ function readExcludedCookie() {
 }
 
 function save() {
-  const value = encodeURIComponent(JSON.stringify({ prefs: state.prefs, plans: state.plans, themes: state.themes, compare: state.compare }));
+  const value = encodeURIComponent(JSON.stringify({ prefs: state.prefs, plans: state.plans, themes: state.themes, compare: state.compare, creditFilter: state.creditFilter }));
   const excludedValue = encodeURIComponent(JSON.stringify(state.excluded));
   const path = location.pathname.replace(/[^/]*$/, '') || '/';
   document.cookie = `${COOKIE}=${value}; Max-Age=31536000; Path=${path}; SameSite=Lax${location.protocol === 'https:' ? '; Secure' : ''}`;
@@ -70,6 +71,7 @@ function planCount() { return TERMS.reduce((n, term) => n + (currentPlan()[term]
 function matchingCourses() {
   const excluded = new Set(excludedIds());
   return catalog().filter(course => !excluded.has(course.id) && offeringAvailable(course, state.term, state.prefs))
+    .filter(course => !state.creditFilter || course.credits.includes(state.creditFilter))
     .filter(course => !state.query || `${course.title} ${course.description} ${(course.fields || []).join(' ')}`.toLowerCase().includes(state.query));
 }
 function relevance(course) {
@@ -95,6 +97,10 @@ function renderControls() {
   $('standing').value = p.standing; $('target').value = String(p.target); $('location').value = p.location;
   $('formats').innerHTML = FORMATS.map(mode => `<button class="chip" type="button" data-format="${escapeHtml(mode)}" aria-pressed="${p.formats.includes(mode)}">${escapeHtml(mode)}</button>`).join('');
   $('browse-terms').innerHTML = TERMS.map(term => `<button type="button" data-term="${term}" aria-pressed="${state.term === term}">${term}</button>`).join('');
+  const creditValues = [...new Set(catalog().flatMap(course => course.credits))].sort((a, b) => a - b);
+  if (!creditValues.includes(state.creditFilter)) state.creditFilter = 0;
+  $('credit-filter').innerHTML = '<option value="0">Any credits</option>' + creditValues.map(n => `<option value="${n}">${n} credits</option>`).join('');
+  $('credit-filter').value = String(state.creditFilter);
   $('data-note').textContent = `${state.data.courses.length} undergraduate offerings · ${state.prefs.academicYear} · refreshed ${new Date(state.data.updatedAt).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'})} from Evergreen’s catalog`;
 }
 
@@ -124,13 +130,13 @@ function renderCourses() {
   else if (state.sort === 'credits') results.sort((a,b) => Math.max(...b.credits) - Math.max(...a.credits) || a.title.localeCompare(b.title));
   else results.sort((a,b) => relevance(b) - relevance(a) || a.title.localeCompare(b.title));
   const hasGoals = Boolean(state.prefs.careerGoals || state.prefs.academicFocus || state.prefs.otherInterests || state.prefs.dislikedFields);
-  $('result-count').textContent = `${results.length} ${results.length === 1 ? 'offering' : 'offerings'} for ${state.term.toLowerCase()}${hasGoals ? ' · ranked by your goals' : ''}`;
+  $('result-count').textContent = `${results.length} ${results.length === 1 ? 'offering' : 'offerings'} for ${state.term.toLowerCase()}${state.creditFilter ? ` · offering ${state.creditFilter} credits` : ''}${hasGoals && state.sort === 'relevance' ? ' · ranked by your goals' : ''}`;
   const shown = results.slice(0, state.visible);
   $('course-list').innerHTML = shown.length ? shown.map(course => {
     const inPlan = (currentPlan()[state.term] || []).some(item => item.id === course.id);
     const comparing = state.compare.some(item => item.id === course.id && item.term === state.term);
     const availableCredits = course.credits;
-    const preferred = availableCredits.filter(n => n <= state.prefs.target).at(-1) ?? availableCredits[0];
+    const preferred = state.creditFilter && availableCredits.includes(state.creditFilter) ? state.creditFilter : availableCredits.filter(n => n <= state.prefs.target).at(-1) ?? availableCredits[0];
     const alreadyTaken = courseAlreadyTaken(course, state.prefs.completedCourses);
     const mode = course.modes?.[state.term] || 'Format TBA';
     const schedule = scheduleText(course, state.term);
@@ -139,7 +145,7 @@ function renderCourses() {
     const otherTerms = offeredTerms.filter(term => term !== state.term);
     const status = course.offerings?.[state.term]?.status || '';
     return `<article class="course-card" data-course="${escapeHtml(course.id)}"><div class="course-top"><a class="course-title" href="${escapeHtml(course.url)}" target="_blank" rel="noopener">${escapeHtml(course.title)} ↗</a><button class="exclude-button" type="button" data-exclude="${escapeHtml(course.id)}" aria-label="Exclude ${escapeHtml(course.title)} from suggestions">Not for me</button></div><div class="course-meta"><span class="pill gold">${escapeHtml(course.type)}</span><span class="pill">${escapeHtml(mode)}</span><span class="pill neutral">${escapeHtml(course.credits.join(' or '))} cr</span>${alreadyTaken ? '<span class="pill taken">Listed as already taken</span>' : ''}${location ? `<span class="pill neutral">${escapeHtml(location)}</span>` : ''}${otherTerms.length ? `<span class="pill neutral">Also ${escapeHtml(otherTerms.join(' + '))}</span>` : ''}${status === 'Conditional' ? '<span class="pill gold">Conditional entry</span>' : ''}${course.prerequisites && !/^none\b|^no prerequisites/i.test(course.prerequisites) ? '<span class="pill gold">Entry requirements</span>' : ''}</div><p class="course-desc">${escapeHtml(course.description || (course.fields || []).join(' · ') || 'Read the official catalog entry for course details.')}</p>${schedule ? `<p class="course-extra">Meets ${escapeHtml(schedule)}${course.timeOffered ? ` · ${escapeHtml(course.timeOffered)}` : ''}</p>` : '<p class="course-extra">Meeting times: see official schedule</p>'}<div class="course-actions"><div class="course-links"><a href="${escapeHtml(course.scheduleUrl || course.url)}" target="_blank" rel="noopener">${course.scheduleUrl ? 'Full schedule' : 'Catalog details'} ↗</a><button class="compare-button" type="button" data-compare="${course.id}">${comparing ? 'Remove comparison' : 'Compare'}</button></div><div class="credit-picker"><label for="credits-${course.id}">Credits</label><select id="credits-${course.id}" data-credit-for="${course.id}">${availableCredits.map(n => `<option value="${n}" ${n === preferred ? 'selected' : ''}>${n}</option>`).join('')}</select><button class="add-button" type="button" data-add="${course.id}" ${inPlan ? 'disabled' : ''}>${inPlan ? 'Added' : `Add to ${state.term}`}</button></div></div>${otherTerms.length ? `<button type="button" class="add-all" data-add-all="${course.id}">Add ${escapeHtml(offeredTerms.join(' + '))}</button>` : ''}</article>`;
-  }).join('') : `<div class="empty-state"><strong>No courses match this view.</strong><br>Try another quarter, format, or search phrase.</div>`;
+  }).join('') : `<div class="empty-state"><strong>No courses match this view.</strong><br>Try another quarter, credit value, format, or search phrase.</div>`;
   $('load-more').hidden = results.length <= state.visible;
   $('load-more').textContent = `Show more courses (${results.length - state.visible} remaining)`;
 }
@@ -166,7 +172,8 @@ function renderPlan() {
     const replacing = state.replacement?.term === term;
     const removed = replacing ? lookup.get(state.replacement.id) : null;
     const suggestions = replacing ? replacementSuggestions(catalog(), recommendationPrefs(), plan, term, state.replacement, state.replacement.themeId || activeTheme) : [];
-    const replacementHtml = replacing ? `<div class="replacement-panel"><div class="replacement-head"><strong>Try another ${term.toLowerCase()} course</strong><small>${removed ? `After removing ${escapeHtml(removed.title)}` : 'Compatible options for this quarter'}</small></div>${suggestions.length ? `<div class="replacement-list">${suggestions.map(({course,credits,reason}) => `<div class="replacement-item"><div><a href="${escapeHtml(course.url)}" target="_blank" rel="noopener">${escapeHtml(course.title)} ↗</a><small>${escapeHtml(reason)} · ${escapeHtml(course.modes?.[term] || 'Format TBA')}</small></div><div class="replacement-actions"><button class="replacement-exclude" type="button" data-exclude="${escapeHtml(course.id)}" aria-label="Exclude ${escapeHtml(course.title)} from suggestions">Not for me</button><label class="sr-only" for="replace-credits-${escapeHtml(course.id)}">Credits for ${escapeHtml(course.title)}</label><select id="replace-credits-${escapeHtml(course.id)}" data-replacement-credit="${escapeHtml(course.id)}">${course.credits.map(n => `<option value="${n}" ${n === credits ? 'selected' : ''}>${n} cr</option>`).join('')}</select><button type="button" data-replace-id="${escapeHtml(course.id)}" data-replace-term="${term}">Add</button></div></div>`).join('')}</div>` : '<p class="replacement-empty">No clear matches with these filters. Browse the full quarter to choose one yourself.</p>'}<button type="button" class="browse-quarter" data-browse-term="${term}">Browse all ${term.toLowerCase()} offerings ↓</button></div>` : '';
+    const remaining = state.prefs.target - sum;
+    const replacementHtml = replacing ? `<div class="replacement-panel"><div class="replacement-head"><strong>Try another ${term.toLowerCase()} course</strong><small>${removed ? `After removing ${escapeHtml(removed.title)} · ` : ''}${remaining > 0 ? `${remaining} credits to reach your target` : 'Quarter target reached'} · ranked by credit fit and interests</small></div>${suggestions.length ? `<div class="replacement-list">${suggestions.map(({course,credits,reason}) => `<div class="replacement-item"><div><a href="${escapeHtml(course.url)}" target="_blank" rel="noopener">${escapeHtml(course.title)} ↗</a><small>${escapeHtml(reason)} · ${escapeHtml(course.modes?.[term] || 'Format TBA')}</small></div><div class="replacement-actions"><button class="replacement-exclude" type="button" data-exclude="${escapeHtml(course.id)}" aria-label="Exclude ${escapeHtml(course.title)} from suggestions">Not for me</button><label class="sr-only" for="replace-credits-${escapeHtml(course.id)}">Credits for ${escapeHtml(course.title)}</label><select id="replace-credits-${escapeHtml(course.id)}" data-replacement-credit="${escapeHtml(course.id)}">${course.credits.map(n => `<option value="${n}" ${n === credits ? 'selected' : ''}>${n} cr</option>`).join('')}</select><button type="button" data-replace-id="${escapeHtml(course.id)}" data-replace-term="${term}">Add</button></div></div>`).join('')}</div>` : '<p class="replacement-empty">No clear matches with these filters. Browse the full quarter to choose one yourself.</p>'}<button type="button" class="browse-quarter" data-browse-term="${term}">Browse all ${term.toLowerCase()} offerings ↓</button></div>` : '';
     return `<section class="plan-term"><div class="plan-term-head"><span>${term}</span><span>${sum} / ${state.prefs.target} credits</span></div><progress max="${state.prefs.target}" value="${Math.min(sum,state.prefs.target)}" aria-label="${term} credits"></progress>${entries.length ? entries.map(item => {
       const course = lookup.get(item.id);
       return `<div class="plan-item"><div><a href="${escapeHtml(course.url)}" target="_blank" rel="noopener">${escapeHtml(course.title)} ↗</a><small>${item.credits} credits · ${escapeHtml(course.modes?.[term] || 'Format TBA')}</small><button class="plan-exclude" type="button" data-exclude="${escapeHtml(course.id)}" data-exclude-term="${term}" aria-label="Exclude ${escapeHtml(course.title)} from suggestions">Not for me</button></div><button type="button" data-remove="${escapeHtml(item.id)}" data-remove-term="${term}" aria-label="Remove ${escapeHtml(course.title)} from ${term}" title="Remove">×</button></div>`;
@@ -263,6 +270,7 @@ function events() {
   $('formats').addEventListener('click', event => { const mode = event.target.closest('[data-format]')?.dataset.format; if (!mode) return; const next = state.prefs.formats.includes(mode) ? state.prefs.formats.filter(x => x !== mode) : [...state.prefs.formats,mode]; if (!next.length) { notify('Keep at least one learning format selected.'); return; } state.prefs.formats = next; updatePrefs(); });
   $('browse-terms').addEventListener('click', event => { const term = event.target.closest('[data-term]')?.dataset.term; if (!term) return; state.term = term; state.visible = 18; renderControls(); renderCourses(); });
   $('search').addEventListener('input', event => { state.query = event.target.value.trim().toLowerCase(); state.visible = 18; renderCourses(); });
+  $('credit-filter').addEventListener('change', event => { state.creditFilter = Number(event.target.value) || 0; state.visible = 18; save(); renderCourses(); });
   $('sort').addEventListener('change', event => { state.sort = event.target.value; renderCourses(); });
   $('load-more').addEventListener('click', () => { state.visible += 18; renderCourses(); });
   $('excluded-list').addEventListener('click', event => {
@@ -307,7 +315,7 @@ function events() {
     }
   });
   $('clear-plan').addEventListener('click', () => { state.plans[state.prefs.academicYear] = emptyPlan(); state.themes[state.prefs.academicYear] = 'custom'; state.replacement = null; save(); renderCourses(); renderPlan(); notify('Draft plan cleared.'); });
-  $('reset').addEventListener('click', () => { const path = location.pathname.replace(/[^/]*$/, '') || '/'; document.cookie = `${COOKIE}=; Max-Age=0; Path=${path}; SameSite=Lax`; document.cookie = `${EXCLUDED_COOKIE}=; Max-Age=0; Path=${path}; SameSite=Lax`; state.prefs = { ...defaults, formats: [...FORMATS], academicYear: state.manifest.catalogs[0].academicYear }; state.plans = {}; state.themes = {}; state.excluded = {}; state.replacement = null; state.compare = []; state.term = 'Fall'; state.query = ''; $('search').value = ''; $('sort').value = 'relevance'; state.sort = 'relevance'; state.visible = 18; syncGoalInputs(); if (state.data.academicYear === state.prefs.academicYear) render(); else loadYear(state.prefs.academicYear); notify('Saved choices cleared.'); });
+  $('reset').addEventListener('click', () => { const path = location.pathname.replace(/[^/]*$/, '') || '/'; document.cookie = `${COOKIE}=; Max-Age=0; Path=${path}; SameSite=Lax`; document.cookie = `${EXCLUDED_COOKIE}=; Max-Age=0; Path=${path}; SameSite=Lax`; state.prefs = { ...defaults, formats: [...FORMATS], academicYear: state.manifest.catalogs[0].academicYear }; state.plans = {}; state.themes = {}; state.excluded = {}; state.replacement = null; state.compare = []; state.term = 'Fall'; state.query = ''; state.creditFilter = 0; $('search').value = ''; $('sort').value = 'relevance'; state.sort = 'relevance'; state.visible = 18; syncGoalInputs(); if (state.data.academicYear === state.prefs.academicYear) render(); else loadYear(state.prefs.academicYear); notify('Saved choices cleared.'); });
   $('copy-plan').addEventListener('click', async () => { const lookup = byId(); const lines = [`Evergreen Course Map — ${state.prefs.academicYear}`]; for (const term of TERMS) { const entries = currentPlan()[term] || []; lines.push(`\n${term} (${entries.reduce((n,x)=>n+Number(x.credits),0)} credits)`); entries.forEach(item => { const c = lookup.get(item.id); if (c) lines.push(`• ${c.title} — ${item.credits} credits — ${c.url}`); }); } lines.push('\nCheck official course listings before enrolling.'); try { await navigator.clipboard.writeText(lines.join('\n')); notify('Plan summary copied.'); } catch { notify('Clipboard unavailable in this browser.'); } });
 }
 

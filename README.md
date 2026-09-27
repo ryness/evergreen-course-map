@@ -1,6 +1,6 @@
 # Evergreen Course Map
 
-An independent, shareable course planner for [The Evergreen State College](https://www.evergreen.edu/). The live site lets students choose a catalog year, class standing, interests, learning formats, and a credit target; explore three suggested paths; and build their own fall/winter/spring plan. The browser saves choices and draft plans in a first-party cookie. No account or analytics service is used.
+An independent, shareable course planner for [The Evergreen State College](https://www.evergreen.edu/). Students can describe possible careers, core academic interests, other pursuits, and prior classes in their own words. Eight suggested themes fill a fall/winter/spring draft; students can remove a course to see compatible alternatives or freely browse and combine offerings at any published credit value. The credit target guides suggestions but does not restrict browsing or manual choices. The browser saves choices and draft plans in a first-party cookie. No account or analytics service is used.
 
 ## Catalog data
 

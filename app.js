@@ -1,11 +1,12 @@
-import { TERMS, STANDINGS, FORMATS, INTERESTS, interestTags, offeringAvailable, planIssues, suggestedPaths } from './planner.js';
+import { TERMS, STANDINGS, FORMATS, INTERESTS, offeringAvailable, planIssues } from './planner.js';
+import { THEMES, courseRelevance, courseAlreadyTaken, suggestThemePlan, replacementSuggestions } from './recommend.js';
 
 const COOKIE = 'evergreen-course-map-v1';
 const $ = id => document.getElementById(id);
 const emptyPlan = () => Object.fromEntries(TERMS.map(term => [term, []]));
-const defaults = { academicYear: '', standing: 'Freshman', target: 16, location: 'Any location', interests: [], formats: [...FORMATS] };
-const state = { prefs: { ...defaults }, plans: {}, compare: [], term: 'Fall', query: '', sort: 'relevance', visible: 18, data: null, manifest: null };
-let toastTimer;
+const defaults = { academicYear: '', standing: 'Freshman', target: 16, location: 'Any location', careerGoals: '', academicFocus: '', otherInterests: '', completedCourses: '', formats: [...FORMATS] };
+const state = { prefs: { ...defaults }, plans: {}, themes: {}, compare: [], replacement: null, term: 'Fall', query: '', sort: 'relevance', visible: 18, data: null, manifest: null };
+let toastTimer, goalsTimer;
 
 function readCookie() {
   const row = document.cookie.split('; ').find(x => x.startsWith(`${COOKIE}=`));
@@ -18,16 +19,20 @@ function readCookie() {
       standing: STANDINGS.includes(prefs.standing) ? prefs.standing : defaults.standing,
       target: [4, 8, 12, 16, 20].includes(Number(prefs.target)) ? Number(prefs.target) : defaults.target,
       location: ['Any location', 'Olympia', 'Tacoma', 'Native Pathways - Olympia'].includes(prefs.location) ? prefs.location : defaults.location,
-      interests: Array.isArray(prefs.interests) ? prefs.interests.filter(x => INTERESTS.some(item => item.id === x)) : [],
+      careerGoals: typeof prefs.careerGoals === 'string' ? prefs.careerGoals.slice(0, 300) : '',
+      academicFocus: typeof prefs.academicFocus === 'string' ? prefs.academicFocus.slice(0, 300) : (Array.isArray(prefs.interests) ? prefs.interests.map(id => INTERESTS.find(item => item.id === id)?.label).filter(Boolean).join(', ') : ''),
+      otherInterests: typeof prefs.otherInterests === 'string' ? prefs.otherInterests.slice(0, 300) : '',
+      completedCourses: typeof prefs.completedCourses === 'string' ? prefs.completedCourses.slice(0, 450) : '',
       formats: Array.isArray(prefs.formats) && prefs.formats.length ? prefs.formats.filter(x => FORMATS.includes(x)) : [...FORMATS],
     };
     if (data.plans && typeof data.plans === 'object') state.plans = data.plans;
+    if (data.themes && typeof data.themes === 'object') state.themes = data.themes;
     if (Array.isArray(data.compare)) state.compare = data.compare.filter(item => item && typeof item.id === 'string' && TERMS.includes(item.term)).slice(0, 3);
   } catch { /* An old or malformed cookie should not stop the planner. */ }
 }
 
 function save() {
-  const value = encodeURIComponent(JSON.stringify({ prefs: state.prefs, plans: state.plans, compare: state.compare }));
+  const value = encodeURIComponent(JSON.stringify({ prefs: state.prefs, plans: state.plans, themes: state.themes, compare: state.compare }));
   const path = location.pathname.replace(/[^/]*$/, '') || '/';
   document.cookie = `${COOKIE}=${value}; Max-Age=31536000; Path=${path}; SameSite=Lax${location.protocol === 'https:' ? '; Secure' : ''}`;
 }
@@ -50,10 +55,10 @@ function matchingCourses() {
     .filter(course => !state.query || `${course.title} ${course.description} ${(course.fields || []).join(' ')}`.toLowerCase().includes(state.query));
 }
 function relevance(course) {
-  const tags = interestTags(course);
-  return tags.filter(tag => state.prefs.interests.includes(tag)).length * 10
+  return courseRelevance(course, state.prefs)
     + (course.type === 'Program' ? 1 : 0)
-    + ((course.meetings?.[state.term] || []).length ? 1 : 0);
+    + ((course.meetings?.[state.term] || []).length ? 1 : 0)
+    - (courseAlreadyTaken(course, state.prefs.completedCourses) ? 25 : 0);
 }
 function timeText(minute) {
   const hour = Math.floor(minute / 60); return `${hour % 12 || 12}:${String(minute % 60).padStart(2, '0')}${hour >= 12 ? 'pm' : 'am'}`;
@@ -70,19 +75,16 @@ function renderControls() {
   $('academic-year').innerHTML = state.manifest.catalogs.map(item => `<option value="${escapeHtml(item.academicYear)}">${escapeHtml(item.academicYear)}</option>`).join('');
   $('academic-year').value = p.academicYear;
   $('standing').value = p.standing; $('target').value = String(p.target); $('location').value = p.location;
-  $('interests').innerHTML = INTERESTS.map(item => `<button class="chip" type="button" data-interest="${item.id}" aria-pressed="${p.interests.includes(item.id)}">${escapeHtml(item.label)}</button>`).join('');
   $('formats').innerHTML = FORMATS.map(mode => `<button class="chip" type="button" data-format="${escapeHtml(mode)}" aria-pressed="${p.formats.includes(mode)}">${escapeHtml(mode)}</button>`).join('');
   $('browse-terms').innerHTML = TERMS.map(term => `<button type="button" data-term="${term}" aria-pressed="${state.term === term}">${term}</button>`).join('');
   $('data-note').textContent = `${state.data.courses.length} undergraduate offerings · ${state.prefs.academicYear} · refreshed ${new Date(state.data.updatedAt).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'})} from Evergreen’s catalog`;
 }
 
-function renderPaths() {
-  const suggestions = suggestedPaths(catalog(), state.prefs);
-  $('path-grid').innerHTML = suggestions.map((path, index) => `<article class="path-card"><div class="path-card-inner"><div class="path-number">PATH 0${index + 1}</div><h3>${escapeHtml(path.title)}</h3><p class="path-hint">${escapeHtml(path.hint)}</p>${TERMS.map(term => {
-    const entries = path.plan[term] || [];
-    const total = entries.reduce((n, entry) => n + entry.credits, 0);
-    return `<div class="path-term"><div class="path-term-head"><span>${term}</span><span>${total} / ${state.prefs.target} credits</span></div>${entries.length ? entries.map(entry => { const course = catalog().find(c => c.id === entry.id); return `<div class="path-course">${escapeHtml(course?.title || '')} <span>· ${entry.credits} cr</span></div>`; }).join('') : '<div class="path-course path-empty">No combination found</div>'}</div>`;
-  }).join('')}<button type="button" class="button-primary" data-path="${path.id}">Use this path</button></div></article>`).join('');
+function syncGoalInputs() {
+  $('career-goals').value = state.prefs.careerGoals;
+  $('academic-focus').value = state.prefs.academicFocus;
+  $('other-interests').value = state.prefs.otherInterests;
+  $('completed-courses').value = state.prefs.completedCourses;
 }
 
 function renderCompare() {
@@ -102,43 +104,59 @@ function renderCourses() {
   if (state.sort === 'title') results.sort((a,b) => a.title.localeCompare(b.title));
   else if (state.sort === 'credits') results.sort((a,b) => Math.max(...b.credits) - Math.max(...a.credits) || a.title.localeCompare(b.title));
   else results.sort((a,b) => relevance(b) - relevance(a) || a.title.localeCompare(b.title));
-  $('result-count').textContent = `${results.length} ${results.length === 1 ? 'offering' : 'offerings'} for ${state.term.toLowerCase()}${state.prefs.interests.length ? ' · ranked by your interests' : ''}`;
+  const hasGoals = Boolean(state.prefs.careerGoals || state.prefs.academicFocus || state.prefs.otherInterests);
+  $('result-count').textContent = `${results.length} ${results.length === 1 ? 'offering' : 'offerings'} for ${state.term.toLowerCase()}${hasGoals ? ' · ranked by your goals' : ''}`;
   const shown = results.slice(0, state.visible);
   $('course-list').innerHTML = shown.length ? shown.map(course => {
     const inPlan = (currentPlan()[state.term] || []).some(item => item.id === course.id);
     const comparing = state.compare.some(item => item.id === course.id && item.term === state.term);
-    const availableCredits = course.credits.filter(n => n <= state.prefs.target);
-    const preferred = availableCredits.at(-1);
+    const availableCredits = course.credits;
+    const preferred = availableCredits.filter(n => n <= state.prefs.target).at(-1) ?? availableCredits[0];
+    const alreadyTaken = courseAlreadyTaken(course, state.prefs.completedCourses);
     const mode = course.modes?.[state.term] || 'Format TBA';
     const schedule = scheduleText(course, state.term);
     const location = course.location && course.location !== 'Olympia' ? course.location : '';
-    const offeredTerms = TERMS.filter(term => course.offerings?.[term]);
+    const offeredTerms = TERMS.filter(term => offeringAvailable(course, term, state.prefs));
     const otherTerms = offeredTerms.filter(term => term !== state.term);
     const status = course.offerings?.[state.term]?.status || '';
-    return `<article class="course-card" data-course="${escapeHtml(course.id)}"><div class="course-top"><a class="course-title" href="${escapeHtml(course.url)}" target="_blank" rel="noopener">${escapeHtml(course.title)} ↗</a></div><div class="course-meta"><span class="pill gold">${escapeHtml(course.type)}</span><span class="pill">${escapeHtml(mode)}</span><span class="pill neutral">${escapeHtml(course.credits.join(' or '))} cr</span>${location ? `<span class="pill neutral">${escapeHtml(location)}</span>` : ''}${otherTerms.length ? `<span class="pill neutral">Also ${escapeHtml(otherTerms.join(' + '))}</span>` : ''}${status === 'Conditional' ? '<span class="pill gold">Conditional entry</span>' : ''}${course.prerequisites && !/^none\b|^no prerequisites/i.test(course.prerequisites) ? '<span class="pill gold">Entry requirements</span>' : ''}</div><p class="course-desc">${escapeHtml(course.description || (course.fields || []).join(' · ') || 'Read the official catalog entry for course details.')}</p>${schedule ? `<p class="course-extra">Meets ${escapeHtml(schedule)}${course.timeOffered ? ` · ${escapeHtml(course.timeOffered)}` : ''}</p>` : '<p class="course-extra">Meeting times: see official schedule</p>'}<div class="course-actions"><div class="course-links"><a href="${escapeHtml(course.scheduleUrl || course.url)}" target="_blank" rel="noopener">${course.scheduleUrl ? 'Full schedule' : 'Catalog details'} ↗</a><button class="compare-button" type="button" data-compare="${course.id}">${comparing ? 'Remove comparison' : 'Compare'}</button></div><div class="credit-picker"><label for="credits-${course.id}">Credits</label><select id="credits-${course.id}" data-credit-for="${course.id}">${availableCredits.map(n => `<option value="${n}" ${n === preferred ? 'selected' : ''}>${n}</option>`).join('')}</select><button class="add-button" type="button" data-add="${course.id}" ${inPlan ? 'disabled' : ''}>${inPlan ? 'Added' : `Add to ${state.term}`}</button></div></div>${otherTerms.length ? `<button type="button" class="add-all" data-add-all="${course.id}">Add ${escapeHtml(offeredTerms.join(' + '))}</button>` : ''}</article>`;
-  }).join('') : `<div class="empty-state"><strong>No courses match this view.</strong><br>Try another quarter, format, credit target, or search phrase.</div>`;
+    return `<article class="course-card" data-course="${escapeHtml(course.id)}"><div class="course-top"><a class="course-title" href="${escapeHtml(course.url)}" target="_blank" rel="noopener">${escapeHtml(course.title)} ↗</a></div><div class="course-meta"><span class="pill gold">${escapeHtml(course.type)}</span><span class="pill">${escapeHtml(mode)}</span><span class="pill neutral">${escapeHtml(course.credits.join(' or '))} cr</span>${alreadyTaken ? '<span class="pill taken">Listed as already taken</span>' : ''}${location ? `<span class="pill neutral">${escapeHtml(location)}</span>` : ''}${otherTerms.length ? `<span class="pill neutral">Also ${escapeHtml(otherTerms.join(' + '))}</span>` : ''}${status === 'Conditional' ? '<span class="pill gold">Conditional entry</span>' : ''}${course.prerequisites && !/^none\b|^no prerequisites/i.test(course.prerequisites) ? '<span class="pill gold">Entry requirements</span>' : ''}</div><p class="course-desc">${escapeHtml(course.description || (course.fields || []).join(' · ') || 'Read the official catalog entry for course details.')}</p>${schedule ? `<p class="course-extra">Meets ${escapeHtml(schedule)}${course.timeOffered ? ` · ${escapeHtml(course.timeOffered)}` : ''}</p>` : '<p class="course-extra">Meeting times: see official schedule</p>'}<div class="course-actions"><div class="course-links"><a href="${escapeHtml(course.scheduleUrl || course.url)}" target="_blank" rel="noopener">${course.scheduleUrl ? 'Full schedule' : 'Catalog details'} ↗</a><button class="compare-button" type="button" data-compare="${course.id}">${comparing ? 'Remove comparison' : 'Compare'}</button></div><div class="credit-picker"><label for="credits-${course.id}">Credits</label><select id="credits-${course.id}" data-credit-for="${course.id}">${availableCredits.map(n => `<option value="${n}" ${n === preferred ? 'selected' : ''}>${n}</option>`).join('')}</select><button class="add-button" type="button" data-add="${course.id}" ${inPlan ? 'disabled' : ''}>${inPlan ? 'Added' : `Add to ${state.term}`}</button></div></div>${otherTerms.length ? `<button type="button" class="add-all" data-add-all="${course.id}">Add ${escapeHtml(offeredTerms.join(' + '))}</button>` : ''}</article>`;
+  }).join('') : `<div class="empty-state"><strong>No courses match this view.</strong><br>Try another quarter, format, or search phrase.</div>`;
   $('load-more').hidden = results.length <= state.visible;
   $('load-more').textContent = `Show more courses (${results.length - state.visible} remaining)`;
 }
 
 function renderPlan() {
   const plan = currentPlan(); const lookup = byId();
+  const activeTheme = state.themes[state.prefs.academicYear] || 'custom';
+  $('theme').innerHTML = '<option value="custom">Choose a theme or build your own</option>' + THEMES.map(theme => `<option value="${theme.id}">${escapeHtml(theme.label)}</option>`).join('');
+  $('theme').value = activeTheme;
+  $('theme-hint').textContent = THEMES.find(theme => theme.id === activeTheme)?.hint || 'A theme fills your draft with ideas. You can change every choice afterward.';
   $('nav-count').textContent = planCount();
   $('plan-total').textContent = `${planCount()} ${planCount() === 1 ? 'course' : 'courses'}`;
   $('plan-terms').innerHTML = TERMS.map(term => {
     const entries = (plan[term] || []).filter(item => lookup.has(item.id));
     const sum = entries.reduce((n, x) => n + Number(x.credits), 0);
+    const replacing = state.replacement?.term === term;
+    const removed = replacing ? lookup.get(state.replacement.id) : null;
+    const suggestions = replacing ? replacementSuggestions(catalog(), state.prefs, plan, term, state.replacement, state.replacement.themeId || activeTheme) : [];
+    const replacementHtml = replacing ? `<div class="replacement-panel"><div class="replacement-head"><strong>Try another ${term.toLowerCase()} course</strong><small>${removed ? `After removing ${escapeHtml(removed.title)}` : 'Compatible options for this quarter'}</small></div>${suggestions.length ? `<div class="replacement-list">${suggestions.map(({course,credits,reason}) => `<div class="replacement-item"><div><a href="${escapeHtml(course.url)}" target="_blank" rel="noopener">${escapeHtml(course.title)} ↗</a><small>${escapeHtml(reason)} · ${escapeHtml(course.modes?.[term] || 'Format TBA')}</small></div><div class="replacement-actions"><label class="sr-only" for="replace-credits-${escapeHtml(course.id)}">Credits for ${escapeHtml(course.title)}</label><select id="replace-credits-${escapeHtml(course.id)}" data-replacement-credit="${escapeHtml(course.id)}">${course.credits.map(n => `<option value="${n}" ${n === credits ? 'selected' : ''}>${n} cr</option>`).join('')}</select><button type="button" data-replace-id="${escapeHtml(course.id)}" data-replace-term="${term}">Add</button></div></div>`).join('')}</div>` : '<p class="replacement-empty">No clear matches with these filters. Browse the full quarter to choose one yourself.</p>'}<button type="button" class="browse-quarter" data-browse-term="${term}">Browse all ${term.toLowerCase()} offerings ↓</button></div>` : '';
     return `<section class="plan-term"><div class="plan-term-head"><span>${term}</span><span>${sum} / ${state.prefs.target} credits</span></div><progress max="${state.prefs.target}" value="${Math.min(sum,state.prefs.target)}" aria-label="${term} credits"></progress>${entries.length ? entries.map(item => {
       const course = lookup.get(item.id);
       return `<div class="plan-item"><div><a href="${escapeHtml(course.url)}" target="_blank" rel="noopener">${escapeHtml(course.title)} ↗</a><small>${item.credits} credits · ${escapeHtml(course.modes?.[term] || 'Format TBA')}</small></div><button type="button" data-remove="${escapeHtml(item.id)}" data-remove-term="${term}" aria-label="Remove ${escapeHtml(course.title)} from ${term}" title="Remove">×</button></div>`;
-    }).join('') : '<p class="plan-term-empty">Nothing chosen yet</p>'}</section>`;
+    }).join('') : '<p class="plan-term-empty">Nothing chosen yet</p>'}${replacementHtml}</section>`;
   }).join('');
   const issues = planIssues(plan, catalog(), state.prefs.target);
   $('plan-issues').innerHTML = planCount() && !issues.length ? '<div class="issue-ok">No credit or published time conflicts found.</div>' : issues.slice(0, 8).map(issue => `<div class="issue ${escapeHtml(issue.kind)}">${escapeHtml(issue.text)}</div>`).join('') + (issues.length > 8 ? `<div class="issue">${issues.length - 8} more items to check on the official schedule.</div>` : '');
 }
 
-function render() { if (!state.data) return; renderControls(); renderPaths(); renderCompare(); renderCourses(); renderPlan(); }
-function updatePrefs() { state.visible = 18; save(); render(); }
+function render() { if (!state.data) return; renderControls(); renderCompare(); renderCourses(); renderPlan(); }
+function updatePrefs() {
+  state.visible = 18;
+  const theme = state.themes[state.prefs.academicYear];
+  if (theme && theme !== 'custom') state.plans[state.prefs.academicYear] = suggestThemePlan(catalog(), state.prefs, theme);
+  state.replacement = null;
+  save(); render();
+}
 
 async function loadYear(year) {
   const record = state.manifest.catalogs.find(item => item.academicYear === year);
@@ -150,6 +168,9 @@ async function loadYear(year) {
     state.data = await response.json();
     state.prefs.academicYear = year;
     state.plans[year] ||= emptyPlan();
+    state.themes[year] ||= 'custom';
+    state.replacement = null;
+    syncGoalInputs();
     save(); render();
   } catch (error) {
     $('result-count').textContent = 'Could not load the catalog. Please reload the page.';
@@ -162,19 +183,64 @@ function events() {
   $('standing').addEventListener('change', event => { state.prefs.standing = event.target.value; updatePrefs(); });
   $('target').addEventListener('change', event => { state.prefs.target = Number(event.target.value); updatePrefs(); });
   $('location').addEventListener('change', event => { state.prefs.location = event.target.value; updatePrefs(); });
-  $('interests').addEventListener('click', event => { const id = event.target.closest('[data-interest]')?.dataset.interest; if (!id) return; state.prefs.interests = state.prefs.interests.includes(id) ? state.prefs.interests.filter(x => x !== id) : [...state.prefs.interests,id]; updatePrefs(); });
+  for (const [id, key] of [['career-goals','careerGoals'], ['academic-focus','academicFocus'], ['other-interests','otherInterests'], ['completed-courses','completedCourses']]) {
+    $(id).addEventListener('input', event => {
+      state.prefs[key] = event.target.value;
+      clearTimeout(goalsTimer);
+      goalsTimer = setTimeout(updatePrefs, 280);
+    });
+  }
+  $('theme').addEventListener('change', event => {
+    const id = event.target.value;
+    if (id !== 'custom' && !THEMES.some(theme => theme.id === id)) return;
+    state.themes[state.prefs.academicYear] = id;
+    if (id !== 'custom') state.plans[state.prefs.academicYear] = suggestThemePlan(catalog(), state.prefs, id);
+    state.replacement = null;
+    save(); renderCourses(); renderPlan();
+    if (id !== 'custom') notify(`${THEMES.find(theme => theme.id === id).label} added to your draft.`);
+  });
   $('formats').addEventListener('click', event => { const mode = event.target.closest('[data-format]')?.dataset.format; if (!mode) return; const next = state.prefs.formats.includes(mode) ? state.prefs.formats.filter(x => x !== mode) : [...state.prefs.formats,mode]; if (!next.length) { notify('Keep at least one learning format selected.'); return; } state.prefs.formats = next; updatePrefs(); });
   $('browse-terms').addEventListener('click', event => { const term = event.target.closest('[data-term]')?.dataset.term; if (!term) return; state.term = term; state.visible = 18; renderControls(); renderCourses(); });
   $('search').addEventListener('input', event => { state.query = event.target.value.trim().toLowerCase(); state.visible = 18; renderCourses(); });
   $('sort').addEventListener('change', event => { state.sort = event.target.value; renderCourses(); });
   $('load-more').addEventListener('click', () => { state.visible += 18; renderCourses(); });
-  $('course-list').addEventListener('click', event => { const compareId = event.target.closest('[data-compare]')?.dataset.compare; if (compareId) { const existing = state.compare.findIndex(item => item.id === compareId && item.term === state.term); if (existing >= 0) state.compare.splice(existing, 1); else { if (state.compare.length >= 3) { notify('Compare up to three offerings at a time.'); return; } state.compare.push({ id: compareId, term: state.term }); } save(); renderCompare(); renderCourses(); if (existing < 0) $('compare').scrollIntoView({ behavior:'smooth', block:'start' }); return; } const all = event.target.closest('[data-add-all]'); const id = all?.dataset.addAll || event.target.closest('[data-add]')?.dataset.add; if (!id) return; const course = byId().get(id); const credits = Number(document.querySelector(`[data-credit-for="${id}"]`)?.value); if (!course || !course.credits.includes(credits)) return; const plan = currentPlan(); const terms = all ? TERMS.filter(term => course.offerings?.[term]) : [state.term]; for (const term of terms) if (!(plan[term] || []).some(item => item.id === id)) plan[term].push({ id, credits }); save(); renderCourses(); renderPlan(); notify(all ? 'Added across its offered quarters.' : `Added to ${state.term}.`); });
+  $('course-list').addEventListener('click', event => { const compareId = event.target.closest('[data-compare]')?.dataset.compare; if (compareId) { const existing = state.compare.findIndex(item => item.id === compareId && item.term === state.term); if (existing >= 0) state.compare.splice(existing, 1); else { if (state.compare.length >= 3) { notify('Compare up to three offerings at a time.'); return; } state.compare.push({ id: compareId, term: state.term }); } save(); renderCompare(); renderCourses(); if (existing < 0) $('compare').scrollIntoView({ behavior:'smooth', block:'start' }); return; } const all = event.target.closest('[data-add-all]'); const id = all?.dataset.addAll || event.target.closest('[data-add]')?.dataset.add; if (!id) return; const course = byId().get(id); const credits = Number(document.querySelector(`[data-credit-for="${id}"]`)?.value); if (!course || !course.credits.includes(credits)) return; const plan = currentPlan(); const terms = all ? TERMS.filter(term => offeringAvailable(course, term, state.prefs)) : [state.term]; for (const term of terms) if (!(plan[term] || []).some(item => item.id === id)) plan[term].push({ id, credits }); state.themes[state.prefs.academicYear] = 'custom'; state.replacement = null; save(); renderCourses(); renderPlan(); notify(all ? 'Added across its offered quarters.' : `Added to ${state.term}.`); });
   $('compare-grid').addEventListener('click', event => { const button = event.target.closest('[data-uncompare]'); if (!button) return; state.compare = state.compare.filter(item => !(item.id === button.dataset.uncompare && item.term === button.dataset.uncompareTerm)); save(); renderCompare(); renderCourses(); });
   $('clear-compare').addEventListener('click', () => { state.compare = []; save(); renderCompare(); renderCourses(); });
-  $('plan-terms').addEventListener('click', event => { const button = event.target.closest('[data-remove]'); if (!button) return; const plan = currentPlan(); plan[button.dataset.removeTerm] = (plan[button.dataset.removeTerm] || []).filter(item => item.id !== button.dataset.remove); save(); renderCourses(); renderPlan(); });
-  $('path-grid').addEventListener('click', event => { const id = event.target.closest('[data-path]')?.dataset.path; if (!id) return; const path = suggestedPaths(catalog(), state.prefs).find(item => item.id === id); if (!path) return; state.plans[state.prefs.academicYear] = structuredClone(path.plan); save(); renderCourses(); renderPlan(); $('plan').scrollIntoView({ behavior:'smooth', block:'start' }); notify(`“${path.title}” is now your draft plan.`); });
-  $('clear-plan').addEventListener('click', () => { state.plans[state.prefs.academicYear] = emptyPlan(); save(); renderCourses(); renderPlan(); notify('Draft plan cleared.'); });
-  $('reset').addEventListener('click', () => { const path = location.pathname.replace(/[^/]*$/, '') || '/'; document.cookie = `${COOKIE}=; Max-Age=0; Path=${path}; SameSite=Lax`; state.prefs = { ...defaults, interests: [], formats: [...FORMATS], academicYear: state.manifest.catalogs[0].academicYear }; state.plans = {}; state.compare = []; state.term = 'Fall'; state.query = ''; $('search').value = ''; $('sort').value = 'relevance'; state.sort = 'relevance'; state.visible = 18; if (state.data.academicYear === state.prefs.academicYear) render(); else loadYear(state.prefs.academicYear); notify('Saved choices cleared.'); });
+  $('plan-terms').addEventListener('click', event => {
+    const remove = event.target.closest('[data-remove]');
+    if (remove) {
+      const plan = currentPlan();
+      const term = remove.dataset.removeTerm;
+      const item = (plan[term] || []).find(item => item.id === remove.dataset.remove);
+      if (!item) return;
+      plan[term] = plan[term].filter(item => item.id !== remove.dataset.remove);
+      const themeId = state.themes[state.prefs.academicYear] || 'custom';
+      state.themes[state.prefs.academicYear] = 'custom';
+      state.replacement = { term, id: item.id, credits: item.credits, themeId };
+      save(); renderCourses(); renderPlan();
+      return;
+    }
+    const replace = event.target.closest('[data-replace-id]');
+    if (replace) {
+      const id = replace.dataset.replaceId, term = replace.dataset.replaceTerm;
+      const course = byId().get(id);
+      const credits = Number(document.querySelector(`[data-replacement-credit="${id}"]`)?.value);
+      if (!course?.credits.includes(credits) || (currentPlan()[term] || []).some(item => item.id === id)) return;
+      currentPlan()[term].push({ id, credits });
+      state.themes[state.prefs.academicYear] = 'custom'; state.replacement = null;
+      save(); renderCourses(); renderPlan(); notify(`Added to ${term}.`);
+      return;
+    }
+    const browse = event.target.closest('[data-browse-term]');
+    if (browse) {
+      state.term = browse.dataset.browseTerm; state.visible = 18;
+      renderControls(); renderCourses();
+      $('explore').scrollIntoView({ behavior:'smooth', block:'start' });
+    }
+  });
+  $('clear-plan').addEventListener('click', () => { state.plans[state.prefs.academicYear] = emptyPlan(); state.themes[state.prefs.academicYear] = 'custom'; state.replacement = null; save(); renderCourses(); renderPlan(); notify('Draft plan cleared.'); });
+  $('reset').addEventListener('click', () => { const path = location.pathname.replace(/[^/]*$/, '') || '/'; document.cookie = `${COOKIE}=; Max-Age=0; Path=${path}; SameSite=Lax`; state.prefs = { ...defaults, formats: [...FORMATS], academicYear: state.manifest.catalogs[0].academicYear }; state.plans = {}; state.themes = {}; state.replacement = null; state.compare = []; state.term = 'Fall'; state.query = ''; $('search').value = ''; $('sort').value = 'relevance'; state.sort = 'relevance'; state.visible = 18; syncGoalInputs(); if (state.data.academicYear === state.prefs.academicYear) render(); else loadYear(state.prefs.academicYear); notify('Saved choices cleared.'); });
   $('copy-plan').addEventListener('click', async () => { const lookup = byId(); const lines = [`Evergreen Course Map — ${state.prefs.academicYear}`]; for (const term of TERMS) { const entries = currentPlan()[term] || []; lines.push(`\n${term} (${entries.reduce((n,x)=>n+Number(x.credits),0)} credits)`); entries.forEach(item => { const c = lookup.get(item.id); if (c) lines.push(`• ${c.title} — ${item.credits} credits — ${c.url}`); }); } lines.push('\nCheck official course listings before enrolling.'); try { await navigator.clipboard.writeText(lines.join('\n')); notify('Plan summary copied.'); } catch { notify('Clipboard unavailable in this browser.'); } });
 }
 

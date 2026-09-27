@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { courseConflict, offeringAvailable, planIssues, suggestedPaths, TERMS } from '../planner.js';
+import { courseConflict, offeringAvailable, planIssues, TERMS } from '../planner.js';
+import { THEMES, courseAlreadyTaken, replacementSuggestions, suggestThemePlan } from '../recommend.js';
 
 const meeting = (day, start, end, weeks = [1, 2, 3]) => ({ day, start, end, weeks });
 const makeCourse = (id, title, credits, meetings, extra = {}) => ({
@@ -10,14 +11,14 @@ const makeCourse = (id, title, credits, meetings, extra = {}) => ({
   offerings: { Fall: { status: 'Open' } }, meetings: { Fall: meetings },
   location: 'Olympia', ...extra,
 });
-const prefs = { standing: 'Sophomore', target: 20, location: 'Olympia', formats: ['In person', 'Hybrid'], interests: ['law'] };
+const prefs = { standing: 'Sophomore', target: 20, location: 'Olympia', formats: ['In person', 'Hybrid'], academicFocus: 'law, writing', careerGoals: 'lawyer', otherInterests: '', completedCourses: '' };
 
-test('availability respects standing, mode, campus, credit target, and closed status', () => {
+test('availability respects standing, mode, campus, and closed status without hiding larger credits', () => {
   const course = makeCourse('a', 'Constitutional Law', 8, []);
   assert.equal(offeringAvailable(course, 'Fall', prefs), true);
   assert.equal(offeringAvailable(course, 'Winter', prefs), false);
   assert.equal(offeringAvailable(course, 'Fall', { ...prefs, standing: 'Freshman' }), false);
-  assert.equal(offeringAvailable(course, 'Fall', { ...prefs, target: 4 }), false);
+  assert.equal(offeringAvailable(course, 'Fall', { ...prefs, target: 4 }), true);
   assert.equal(offeringAvailable({ ...course, location: 'Tacoma' }, 'Fall', prefs), false);
   assert.equal(offeringAvailable({ ...course, modes: { Fall: 'Remote' } }, 'Fall', prefs), false);
   assert.equal(offeringAvailable({ ...course, offerings: { Fall: { status: 'Closed' } } }, 'Fall', prefs), false);
@@ -41,19 +42,41 @@ test('plan review flags credit overload and actual conflicts', () => {
   assert.ok(issues.some(item => item.kind === 'clash'));
 });
 
-test('path suggestions avoid special-entry courses and fit each quarter', () => {
+test('eight themes avoid completed and special-entry courses while fitting each quarter', () => {
   const courses = [
     makeCourse('a', 'Community Law', 16, [meeting('Mon', 600, 720)], { type: 'Program' }),
     makeCourse('b', 'Public Writing', 4, [meeting('Tue', 600, 720)]),
     makeCourse('c', 'Advanced Constitutional Law', 4, [meeting('Wed', 600, 720)], { prerequisites: 'One year of law study' }),
     makeCourse('d', 'Prior Learning from Experience Preparatory', 4, [meeting('Thu', 600, 720)]),
   ];
-  const paths = suggestedPaths(courses, prefs);
-  assert.equal(paths.length, 3);
-  for (const path of paths) for (const term of TERMS) {
-    assert.ok(path.plan[term].reduce((sum, item) => sum + item.credits, 0) <= prefs.target);
-    assert.ok(path.plan[term].every(item => !['c', 'd'].includes(item.id)));
+  assert.equal(THEMES.length, 8);
+  for (const theme of THEMES) {
+    const plan = suggestThemePlan(courses, { ...prefs, completedCourses: 'Public Writing' }, theme.id);
+    for (const term of TERMS) {
+      assert.ok(plan[term].reduce((sum, item) => sum + item.credits, 0) <= prefs.target);
+      assert.ok(plan[term].every(item => !['b', 'c', 'd'].includes(item.id)));
+    }
   }
+});
+
+test('completed titles match conservatively and do not conflate course sequences', () => {
+  assert.equal(courseAlreadyTaken(makeCourse('x','Introduction to Psychology',4,[]), 'Intro to Psych'), true);
+  assert.equal(courseAlreadyTaken(makeCourse('y','Statistics II',4,[]), 'Statistics I'), false);
+  assert.equal(courseAlreadyTaken(makeCourse('z','The U.S. Supreme Court',4,[]), 'The U.S. Supreme Court'), true);
+});
+
+test('replacement suggestions respect quarter, formats, conflicts, prior classes, and show larger credits', () => {
+  const selected = makeCourse('a','Current Course',4,[meeting('Mon',600,720)]);
+  const good = makeCourse('b','Public Policy Workshop',8,[meeting('Tue',600,720)]);
+  const large = makeCourse('c','Law and Society',16,[meeting('Wed',600,720)],{type:'Program'});
+  const clash = makeCourse('d','Legal Writing',4,[meeting('Mon',650,750)]);
+  const completed = makeCourse('e','Introduction to Psychology',4,[meeting('Thu',600,720)]);
+  const winter = makeCourse('f','Winter Policy',4,[],{offerings:{Winter:{status:'Open'}},modes:{Winter:'In person'}});
+  const plan = {Fall:[{id:'a',credits:4}],Winter:[],Spring:[]};
+  const found = replacementSuggestions([selected,good,large,clash,completed,winter],{...prefs,target:4,completedCourses:'Intro to Psych'},plan,'Fall',{id:'old',credits:4});
+  assert.ok(found.some(item=>item.course.id==='b'));
+  assert.ok(found.some(item=>item.course.id==='c'));
+  assert.ok(found.every(item=>!['a','d','e','f'].includes(item.course.id)));
 });
 
 test('published catalog has unique, linked undergraduate offerings', () => {

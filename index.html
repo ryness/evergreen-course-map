@@ -7,8 +7,8 @@
   <meta name="description" content="Explore Evergreen State College courses, compare possible paths, and build a quarter-by-quarter plan.">
   <title>Evergreen Course Map</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="styles.css?v=20260927-stacked-layout">
-  <script type="module" src="app.js?v=20260927-stacked-layout"></script>
+  <link rel="stylesheet" href="styles.css?v=20260927-personal-suggestions">
+  <script type="module" src="app.js?v=20260927-personal-suggestions"></script>
 </head>
 <body>
   <header class="site-header">
@@ -41,6 +41,8 @@
         <label class="goal-card goal-card-wide" for="completed-courses"><span class="goal-number">05</span><strong>Classes or credits you already have</strong><span>List course names or equivalents, ideally one per line. A credit total alone can’t identify duplicate classes.</span><textarea id="completed-courses" rows="3" maxlength="450" placeholder="e.g. Introduction to Psychology&#10;Statistics I&#10;8 transfer credits in U.S. history"></textarea></label>
       </div>
       <div class="facet-row last"><div><h3>How do you want to learn?</h3><p>Include all formats, or narrow the choices.</p></div><div id="formats" class="chips" role="group" aria-label="Class formats"></div></div>
+      <div class="suggestion-action"><button id="generate-suggestions" class="suggestion-button" type="button" aria-controls="personal-suggestions"><span class="suggestion-spinner" aria-hidden="true"></span><span id="generate-suggestions-label">Generate relevant course suggestions</span></button><p id="suggestion-status" role="status" aria-live="polite">Suggestions also adjust automatically as you edit your answers.</p></div>
+      <section id="personal-suggestions" class="personal-suggestions" aria-labelledby="personal-suggestions-title" hidden><div class="personal-suggestions-heading"><h3 id="personal-suggestions-title">A few places to start</h3><p id="personal-suggestions-note"></p></div><div id="suggestion-cards" class="suggestion-cards"></div></section>
       <div class="setup-footer"><span id="data-note">Loading the catalog…</span><button id="reset" class="text-button" type="button">Clear my saved choices</button></div>
     </div></section>
 

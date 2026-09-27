@@ -7,7 +7,7 @@ const $ = id => document.getElementById(id);
 const emptyPlan = () => Object.fromEntries(TERMS.map(term => [term, []]));
 const defaults = { academicYear: '', standing: 'Freshman', target: 16, location: 'Any location', careerGoals: '', academicFocus: '', otherInterests: '', dislikedFields: '', completedCourses: '', formats: [...FORMATS] };
 const state = { prefs: { ...defaults }, plans: {}, themes: {}, excluded: {}, compare: [], replacement: null, term: 'Fall', query: '', creditFilter: 0, sort: 'relevance', visible: 18, data: null, manifest: null };
-let toastTimer, goalsTimer;
+let toastTimer, goalsTimer, suggestionsTimer;
 
 function readCookie() {
   const row = document.cookie.split('; ').find(x => x.startsWith(`${COOKIE}=`));
@@ -158,6 +158,25 @@ function renderExcluded() {
   $('excluded-list').innerHTML = courses.map(course => `<div class="excluded-item"><span>${escapeHtml(course.title)}</span><button type="button" data-restore="${escapeHtml(course.id)}" aria-label="Restore ${escapeHtml(course.title)}">Restore</button></div>`).join('');
 }
 
+function renderPersonalSuggestions() {
+  const panel = $('personal-suggestions');
+  if (panel.hidden || !state.data) return;
+  const seen = new Set();
+  const ideas = TERMS.map(term => {
+    const item = replacementSuggestions(catalog(), recommendationPrefs(), emptyPlan(), term, null, 'custom', 20)
+      .find(candidate => !seen.has(candidate.course.id));
+    if (item) seen.add(item.course.id);
+    return item ? { term, ...item } : null;
+  }).filter(Boolean);
+  const hasGoals = Boolean(state.prefs.careerGoals.trim() || state.prefs.academicFocus.trim() || state.prefs.otherInterests.trim());
+  $('personal-suggestions-note').textContent = hasGoals
+    ? 'Selected from this catalog using your goals, credit target, and learning preferences. Your draft plan stays yours to edit.'
+    : 'These are starting points. Add a career, academic focus, or hobby for more personal matches.';
+  $('suggestion-cards').innerHTML = ideas.length ? ideas.map(({ term, course, credits, reason }) =>
+    `<article class="suggestion-card"><span class="suggestion-term">${escapeHtml(term)}</span><a class="suggestion-title" href="${escapeHtml(course.url)}" target="_blank" rel="noopener">${escapeHtml(course.title)} ↗</a><p>${escapeHtml(credits)} credits · ${escapeHtml(course.modes?.[term] || 'Format TBA')}</p><small>${escapeHtml(reason)}</small><button type="button" data-suggestion-term="${escapeHtml(term)}">Explore ${escapeHtml(term.toLowerCase())} courses ↓</button></article>`
+  ).join('') : '<p class="suggestion-empty">No matching offerings are available with these settings. Try another year, standing, location, or learning format.</p>';
+}
+
 function renderFinalReview(plan) {
   const review = reviewPlan(plan, catalog(), state.prefs);
   const badge = $('review-badge');
@@ -194,13 +213,14 @@ function renderPlan() {
   renderFinalReview(plan);
 }
 
-function render() { if (!state.data) return; renderControls(); renderCompare(); renderExcluded(); renderCourses(); renderPlan(); }
+function render() { if (!state.data) return; renderControls(); renderCompare(); renderExcluded(); renderCourses(); renderPlan(); renderPersonalSuggestions(); }
 function updatePrefs() {
   state.visible = 18;
   const theme = state.themes[state.prefs.academicYear];
   if (theme && theme !== 'custom') state.plans[state.prefs.academicYear] = suggestThemePlan(catalog(), recommendationPrefs(), theme);
   state.replacement = null;
   save(); render();
+  if (!$('personal-suggestions').hidden) $('suggestion-status').textContent = 'Course ideas updated with your answers.';
 }
 
 function excludeCourse(id, preferredTerm = state.term) {
@@ -269,6 +289,33 @@ function events() {
       goalsTimer = setTimeout(updatePrefs, 280);
     });
   }
+  $('generate-suggestions').addEventListener('click', () => {
+    if (!state.data) { $('suggestion-status').textContent = 'The catalog is still loading. Please try again in a moment.'; return; }
+    clearTimeout(goalsTimer);
+    $('personal-suggestions').hidden = true;
+    updatePrefs();
+    const button = $('generate-suggestions');
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    $('generate-suggestions-label').textContent = 'Finding course ideas…';
+    $('suggestion-status').textContent = 'Finding course ideas for your year…';
+    clearTimeout(suggestionsTimer);
+    suggestionsTimer = setTimeout(() => {
+      button.disabled = false;
+      button.removeAttribute('aria-busy');
+      $('generate-suggestions-label').textContent = 'Refresh course suggestions';
+      $('personal-suggestions').hidden = false;
+      renderPersonalSuggestions();
+      $('suggestion-status').textContent = 'Course ideas are ready below. You can still edit your draft.';
+    }, 650);
+  });
+  $('suggestion-cards').addEventListener('click', event => {
+    const term = event.target.closest('[data-suggestion-term]')?.dataset.suggestionTerm;
+    if (!term) return;
+    state.term = term; state.visible = 18;
+    renderControls(); renderCourses();
+    $('explore').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
   $('theme').addEventListener('change', event => {
     const id = event.target.value;
     if (id !== 'custom' && !THEMES.some(theme => theme.id === id)) return;
@@ -326,7 +373,7 @@ function events() {
     }
   });
   $('clear-plan').addEventListener('click', () => { state.plans[state.prefs.academicYear] = emptyPlan(); state.themes[state.prefs.academicYear] = 'custom'; state.replacement = null; save(); renderCourses(); renderPlan(); notify('Draft plan cleared.'); });
-  $('reset').addEventListener('click', () => { const path = location.pathname.replace(/[^/]*$/, '') || '/'; document.cookie = `${COOKIE}=; Max-Age=0; Path=${path}; SameSite=Lax`; document.cookie = `${EXCLUDED_COOKIE}=; Max-Age=0; Path=${path}; SameSite=Lax`; state.prefs = { ...defaults, formats: [...FORMATS], academicYear: state.manifest.catalogs[0].academicYear }; state.plans = {}; state.themes = {}; state.excluded = {}; state.replacement = null; state.compare = []; state.term = 'Fall'; state.query = ''; state.creditFilter = 0; $('search').value = ''; $('sort').value = 'relevance'; state.sort = 'relevance'; state.visible = 18; syncGoalInputs(); if (state.data.academicYear === state.prefs.academicYear) render(); else loadYear(state.prefs.academicYear); notify('Saved choices cleared.'); });
+  $('reset').addEventListener('click', () => { clearTimeout(goalsTimer); clearTimeout(suggestionsTimer); const button = $('generate-suggestions'); button.disabled = false; button.removeAttribute('aria-busy'); $('generate-suggestions-label').textContent = 'Generate relevant course suggestions'; $('suggestion-status').textContent = 'Suggestions also adjust automatically as you edit your answers.'; $('personal-suggestions').hidden = true; const path = location.pathname.replace(/[^/]*$/, '') || '/'; document.cookie = `${COOKIE}=; Max-Age=0; Path=${path}; SameSite=Lax`; document.cookie = `${EXCLUDED_COOKIE}=; Max-Age=0; Path=${path}; SameSite=Lax`; state.prefs = { ...defaults, formats: [...FORMATS], academicYear: state.manifest.catalogs[0].academicYear }; state.plans = {}; state.themes = {}; state.excluded = {}; state.replacement = null; state.compare = []; state.term = 'Fall'; state.query = ''; state.creditFilter = 0; $('search').value = ''; $('sort').value = 'relevance'; state.sort = 'relevance'; state.visible = 18; syncGoalInputs(); if (state.data.academicYear === state.prefs.academicYear) render(); else loadYear(state.prefs.academicYear); notify('Saved choices cleared.'); });
   $('copy-plan').addEventListener('click', async () => { const lookup = byId(); const lines = [`Evergreen Course Map — ${state.prefs.academicYear}`]; for (const term of TERMS) { const entries = currentPlan()[term] || []; lines.push(`\n${term} (${entries.reduce((n,x)=>n+Number(x.credits),0)} credits)`); entries.forEach(item => { const c = lookup.get(item.id); if (c) lines.push(`• ${c.title} — ${item.credits} credits — ${c.url}`); }); } lines.push('\nCheck official course listings before enrolling.'); try { await navigator.clipboard.writeText(lines.join('\n')); notify('Plan summary copied.'); } catch { notify('Clipboard unavailable in this browser.'); } });
 }
 

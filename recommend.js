@@ -1,4 +1,4 @@
-import { TERMS, INTERESTS, offeringAvailable, courseConflict } from './planner.js?v=20260927-credit-fit';
+import { TERMS, INTERESTS, offeringAvailable, courseConflict } from './planner.js?v=20260927-final-review';
 
 export const THEMES = [
   { id: 'core', label: 'Deep in my core academic interest', hint: 'Substantial interdisciplinary programs centered on your main subject.' },

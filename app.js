@@ -1,5 +1,5 @@
-import { TERMS, STANDINGS, FORMATS, INTERESTS, offeringAvailable, planIssues } from './planner.js?v=20260927-credit-fit';
-import { THEMES, courseRelevance, courseAlreadyTaken, suggestThemePlan, replacementSuggestions } from './recommend.js?v=20260927-credit-fit';
+import { TERMS, STANDINGS, FORMATS, INTERESTS, offeringAvailable, reviewPlan } from './planner.js?v=20260927-final-review';
+import { THEMES, courseRelevance, courseAlreadyTaken, suggestThemePlan, replacementSuggestions } from './recommend.js?v=20260927-final-review';
 
 const COOKIE = 'evergreen-course-map-v1';
 const EXCLUDED_COOKIE = 'evergreen-course-map-excluded-v1';
@@ -158,6 +158,16 @@ function renderExcluded() {
   $('excluded-list').innerHTML = courses.map(course => `<div class="excluded-item"><span>${escapeHtml(course.title)}</span><button type="button" data-restore="${escapeHtml(course.id)}" aria-label="Restore ${escapeHtml(course.title)}">Restore</button></div>`).join('');
 }
 
+function renderFinalReview(plan) {
+  const review = reviewPlan(plan, catalog(), state.prefs);
+  const badge = $('review-badge');
+  badge.className = `review-badge ${review.blockers.length ? 'needs-fixes' : review.checks.length ? 'needs-checks' : 'review-clear'}`;
+  badge.textContent = !review.selectedCount ? 'Add courses first' : review.blockers.length ? `${review.blockers.length} to fix` : review.checks.length ? `${review.checks.length} to verify` : 'No issues found';
+  const quarterRows = review.quarters.map(({term, credits, count}) => `<div class="review-quarter"><strong>${term}</strong><span>${credits} / ${state.prefs.target} credits · ${count} ${count === 1 ? 'course' : 'courses'}</span></div>`).join('');
+  const issueGroup = (title, items, className) => items.length ? `<div class="review-findings ${className}"><h5>${title} (${items.length})</h5><ul>${items.map(item => `<li>${escapeHtml(item.text)}</li>`).join('')}</ul></div>` : '';
+  $('final-review-content').innerHTML = `<p class="review-lede">${review.selectedCount ? review.blockers.length ? 'This draft has conflicts or unavailable selections to resolve.' : review.checks.length ? 'No confirmed time conflict or unavailable selection was found, but these details need checking.' : 'No issues found in the published details for this draft.' : 'Add courses to your draft to review the year.'}</p><div class="review-quarters">${quarterRows}</div>${review.selectedCount ? issueGroup('Needs changes', review.blockers, 'review-blockers') + issueGroup('Things to check', review.checks, 'review-checks') : ''}<p class="review-note">This review uses the saved catalog and published meeting times. Schedules, seats, and entry rules can change; confirm each official listing before enrolling.</p>`;
+}
+
 function renderPlan() {
   const plan = currentPlan(); const lookup = byId();
   const activeTheme = state.themes[state.prefs.academicYear] || 'custom';
@@ -179,8 +189,7 @@ function renderPlan() {
       return `<div class="plan-item"><div><a href="${escapeHtml(course.url)}" target="_blank" rel="noopener">${escapeHtml(course.title)} ↗</a><small>${item.credits} credits · ${escapeHtml(course.modes?.[term] || 'Format TBA')}</small><button class="plan-exclude" type="button" data-exclude="${escapeHtml(course.id)}" data-exclude-term="${term}" aria-label="Exclude ${escapeHtml(course.title)} from suggestions">Not for me</button></div><button type="button" data-remove="${escapeHtml(item.id)}" data-remove-term="${term}" aria-label="Remove ${escapeHtml(course.title)} from ${term}" title="Remove">×</button></div>`;
     }).join('') : '<p class="plan-term-empty">Nothing chosen yet</p>'}${replacementHtml}</section>`;
   }).join('');
-  const issues = planIssues(plan, catalog(), state.prefs.target);
-  $('plan-issues').innerHTML = planCount() && !issues.length ? '<div class="issue-ok">No credit or published time conflicts found.</div>' : issues.slice(0, 8).map(issue => `<div class="issue ${escapeHtml(issue.kind)}">${escapeHtml(issue.text)}</div>`).join('') + (issues.length > 8 ? `<div class="issue">${issues.length - 8} more items to check on the official schedule.</div>` : '');
+  renderFinalReview(plan);
 }
 
 function render() { if (!state.data) return; renderControls(); renderCompare(); renderExcluded(); renderCourses(); renderPlan(); }

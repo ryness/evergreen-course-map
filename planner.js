@@ -66,3 +66,42 @@ export function planIssues(plan, courses, target) {
   }
   return issues;
 }
+
+export function reviewPlan(plan, courses, prefs) {
+  const lookup = new Map(courses.map(course => [course.id, course]));
+  const findings = planIssues(plan, courses, prefs.target).map(issue => ({
+    ...issue,
+    severity: ['clash', 'over'].includes(issue.kind) ? 'blocker' : 'check',
+  }));
+  const quarters = [];
+  let selectedCount = 0;
+  for (const term of TERMS) {
+    const entries = Array.isArray(plan[term]) ? plan[term] : [];
+    selectedCount += entries.length;
+    const credits = entries.reduce((sum, item) => sum + (Number.isFinite(Number(item.credits)) ? Number(item.credits) : 0), 0);
+    quarters.push({ term, credits, count: entries.length });
+    if (!entries.length) findings.push({ term, kind: 'empty', severity: 'check', text: `${term}: no courses selected yet.` });
+    else if (credits < prefs.target) findings.push({ term, kind: 'target', severity: 'check', text: `${term}: ${prefs.target - credits} credits below your planning target; add another course if you want to reach it.` });
+    const seen = new Set();
+    for (const entry of entries) {
+      const course = lookup.get(entry.id);
+      if (!course) {
+        findings.push({ term, kind: 'missing', severity: 'blocker', text: `${term}: a saved course is no longer in this catalog; remove it from your draft.` });
+        continue;
+      }
+      if (seen.has(entry.id)) findings.push({ term, kind: 'duplicate', severity: 'blocker', text: `${term}: ${course.title} appears twice.` });
+      seen.add(entry.id);
+      if (!course.offerings?.[term]) findings.push({ term, kind: 'unavailable', severity: 'blocker', text: `${term}: ${course.title} is not listed for this quarter.` });
+      else if (/closed|cancel/i.test(course.offerings[term].status || '')) findings.push({ term, kind: 'unavailable', severity: 'blocker', text: `${term}: ${course.title} is listed as ${course.offerings[term].status.toLowerCase()}.` });
+      else if (/signature/i.test(course.offerings[term].status || '')) findings.push({ term, kind: 'entry', severity: 'check', text: `${term}: ${course.title} has a signature entry status; confirm how to enroll.` });
+      if (!course.standings?.includes(prefs.standing)) findings.push({ term, kind: 'standing', severity: 'blocker', text: `${term}: ${course.title} is not listed for ${prefs.standing.toLowerCase()} standing.` });
+      if (!course.credits?.includes(Number(entry.credits))) findings.push({ term, kind: 'credits', severity: 'blocker', text: `${term}: ${entry.credits} credits is not a listed option for ${course.title}.` });
+      const mode = course.modes?.[term];
+      if (mode && Array.isArray(prefs.formats) && !prefs.formats.includes(mode)) findings.push({ term, kind: 'format', severity: 'check', text: `${term}: ${course.title} is ${mode.toLowerCase()}, outside your selected learning formats.` });
+      if (prefs.location && prefs.location !== 'Any location' && course.location !== prefs.location && mode !== 'Remote') findings.push({ term, kind: 'location', severity: 'check', text: `${term}: ${course.title} is at ${course.location || 'another location'}, outside your selected campus.` });
+    }
+  }
+  const blockers = findings.filter(item => item.severity === 'blocker');
+  const checks = findings.filter(item => item.severity === 'check');
+  return { quarters, selectedCount, blockers, checks, findings };
+}

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { courseConflict, offeringAvailable, planIssues, TERMS } from '../planner.js';
+import { courseConflict, offeringAvailable, planIssues, reviewPlan, TERMS } from '../planner.js';
 import { THEMES, courseAlreadyTaken, courseRelevance, replacementSuggestions, suggestThemePlan } from '../recommend.js';
 
 const meeting = (day, start, end, weeks = [1, 2, 3]) => ({ day, start, end, weeks });
@@ -40,6 +40,33 @@ test('plan review flags credit overload and actual conflicts', () => {
   const issues = planIssues({ Fall: [{ id: 'a', credits: 16 }, { id: 'b', credits: 8 }], Winter: [], Spring: [] }, [a, b], 20);
   assert.ok(issues.some(item => item.kind === 'over'));
   assert.ok(issues.some(item => item.kind === 'clash'));
+});
+
+test('final review distinguishes a workable draft from conflicts and unknowns', () => {
+  const fall = makeCourse('fall', 'Fall Seminar', 8, [meeting('Mon', 600, 720)]);
+  const winter = makeCourse('winter', 'Winter Studio', 8, [], { offerings: { Winter: { status: 'Open' } }, modes: { Winter: 'In person' }, meetings: { Winter: [meeting('Tue', 600, 720)] } });
+  const spring = makeCourse('spring', 'Spring Workshop', 8, [], { offerings: { Spring: { status: 'Open' } }, modes: { Spring: 'In person' }, meetings: { Spring: [meeting('Wed', 600, 720)] } });
+  const plan = { Fall: [{ id: 'fall', credits: 8 }], Winter: [{ id: 'winter', credits: 8 }], Spring: [{ id: 'spring', credits: 8 }] };
+  const preferences = { ...prefs, target: 8 };
+  const ready = reviewPlan(plan, [fall, winter, spring], preferences);
+  assert.equal(ready.blockers.length, 0);
+  assert.equal(ready.checks.length, 0);
+  const clash = makeCourse('clash', 'Conflicting Seminar', 4, [meeting('Mon', 660, 780)]);
+  const conflict = reviewPlan({ ...plan, Fall: [...plan.Fall, { id: 'clash', credits: 4 }] }, [fall, winter, spring, clash], preferences);
+  assert.ok(conflict.blockers.some(item => item.kind === 'clash'));
+  const uncertain = reviewPlan({ ...plan, Spring: [] }, [fall, winter, { ...spring, meetings: { Spring: [] } }], preferences);
+  assert.ok(uncertain.checks.some(item => item.kind === 'empty'));
+  const missingTime = reviewPlan(plan, [fall, winter, { ...spring, meetings: { Spring: [] } }], preferences);
+  assert.ok(missingTime.checks.some(item => item.kind === 'unknown'));
+});
+
+test('final review catches unavailable offerings, standing, and invalid credits', () => {
+  const course = makeCourse('a', 'Limited Seminar', 8, [meeting('Mon', 600, 720)], { standings: ['Junior'], offerings: { Fall: { status: 'Closed' } } });
+  const review = reviewPlan({ Fall: [{ id: 'a', credits: 4 }], Winter: [], Spring: [] }, [course], { ...prefs, target: 8 });
+  assert.ok(review.blockers.some(item => item.kind === 'unavailable'));
+  assert.ok(review.blockers.some(item => item.kind === 'standing'));
+  assert.ok(review.blockers.some(item => item.kind === 'credits'));
+  assert.ok(review.checks.some(item => item.kind === 'empty'));
 });
 
 test('eight themes avoid completed and special-entry courses while fitting each quarter', () => {

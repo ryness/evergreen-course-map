@@ -1,5 +1,5 @@
 import { TERMS, STANDINGS, FORMATS, INTERESTS, offeringAvailable, planIssues } from './planner.js';
-import { THEMES, courseRelevance, courseAlreadyTaken, suggestThemePlan, replacementSuggestions } from './recommend.js';
+import { THEMES, courseRelevance, courseAlreadyTaken, suggestThemePlan, replacementSuggestions } from './recommend.js?v=20260927-exclusions';
 
 const COOKIE = 'evergreen-course-map-v1';
 const EXCLUDED_COOKIE = 'evergreen-course-map-excluded-v1';

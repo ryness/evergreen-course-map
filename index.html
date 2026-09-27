@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#123f38">
+  <meta name="description" content="Explore Evergreen State College courses, compare possible paths, and build a quarter-by-quarter plan.">
+  <title>Evergreen Course Map</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <a class="brand" href="#top" aria-label="Evergreen Course Map, back to top"><span class="brand-mark" aria-hidden="true">✳</span><span>Evergreen<br><strong>Course Map</strong></span></a>
+      <nav aria-label="Page sections"><a href="#paths">Suggested paths</a><a href="#explore">Explore courses</a><a class="nav-plan" href="#plan">My plan <span id="nav-count">0</span></a></nav>
+    </div>
+  </header>
+
+  <main id="top">
+    <section class="hero wrap">
+      <div class="hero-copy"><p class="eyebrow">Make room for possibility</p><h1>Your Evergreen year,<br><em>your way.</em></h1><p class="hero-lede">Find programs that go deep, courses that let you explore, and a combination that makes sense across fall, winter, and spring.</p></div>
+      <div class="hero-art" aria-hidden="true"><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><span class="hero-asterisk">✳</span><span class="hero-word">Explore<br>freely.</span></div>
+    </section>
+
+    <section class="setup-section" aria-labelledby="setup-title"><div class="wrap">
+      <div class="section-heading setup-heading"><div><p class="eyebrow">01 / Start here</p><h2 id="setup-title">What matters to you?</h2></div><p>Your choices shape the suggestions and course list. They’re saved in a cookie on this device.</p></div>
+      <div class="setup-grid">
+        <div class="setup-card"><label for="academic-year">Catalog year</label><select id="academic-year"></select><small>Published Evergreen offerings for that academic year.</small></div>
+        <div class="setup-card"><label for="standing">Your year in college</label><select id="standing"><option>Freshman</option><option>Sophomore</option><option>Junior</option><option>Senior</option></select><small>We’ll show courses open to your class standing.</small></div>
+        <div class="setup-card"><label for="target">Credits per quarter</label><select id="target"><option value="4">4 credits</option><option value="8">8 credits</option><option value="12">12 credits</option><option value="16" selected>16 credits</option><option value="20">20 credits</option></select><small>A planning target; choose each course’s credits when adding it.</small></div>
+        <div class="setup-card"><label for="location">Campus location</label><select id="location"><option>Any location</option><option>Olympia</option><option>Tacoma</option><option>Native Pathways - Olympia</option></select><small>Remote courses remain visible from any campus.</small></div>
+      </div>
+      <div class="facet-row"><div><h3>What sparks your interest?</h3><p>Pick a few or leave everything open.</p></div><div id="interests" class="chips" role="group" aria-label="Interests"></div></div>
+      <div class="facet-row last"><div><h3>How do you want to learn?</h3><p>Include all formats, or narrow the choices.</p></div><div id="formats" class="chips" role="group" aria-label="Class formats"></div></div>
+      <div class="setup-footer"><span id="data-note">Loading the catalog…</span><button id="reset" class="text-button" type="button">Clear my saved choices</button></div>
+    </div></section>
+
+    <section id="paths" class="paths-section wrap" aria-labelledby="paths-title"><div class="section-heading"><div><p class="eyebrow">02 / See what could fit</p><h2 id="paths-title">Three ways through the year</h2></div><p>Starting points based on your choices. Swap any course in your plan whenever you like.</p></div><div id="path-grid" class="path-grid" aria-live="polite"></div></section>
+
+    <section id="workspace" class="workspace wrap"><div class="workspace-heading"><div><p class="eyebrow">03 / Make it yours</p><h2>Build your own mix</h2><p>Compare real offerings, then add them to fall, winter, or spring.</p></div></div><section id="compare" class="compare-panel" aria-labelledby="compare-title" hidden><div class="panel-heading"><div><p class="eyebrow">Side by side</p><h3 id="compare-title">Course comparison</h3></div><button id="clear-compare" class="text-button" type="button">Clear comparison</button></div><p class="compare-hint">Select up to three courses from any quarter to weigh their topics, format, credits, and time.</p><div id="compare-grid" class="compare-grid"></div></section><div class="workspace-grid"><section id="explore" class="explore-panel" aria-labelledby="explore-title"><div class="panel-heading"><div><h3 id="explore-title">Explore courses</h3><p id="result-count">Loading courses…</p></div></div><div class="browse-controls"><label class="search-box"><span class="sr-only">Search courses</span><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"></circle><path d="m16 16 5 5"></path></svg><input id="search" type="search" placeholder="Search titles, topics, or descriptions"></label><div id="browse-terms" class="segmented" role="group" aria-label="Browse quarter"></div><label class="sort-control">Sort <select id="sort"><option value="relevance">Best match</option><option value="title">A to Z</option><option value="credits">Most credits</option></select></label></div><div id="course-list" class="course-list" aria-live="polite"></div><button id="load-more" type="button" class="load-more" hidden>Show more courses</button></section><aside id="plan" class="plan-panel" aria-labelledby="plan-title"><div class="plan-inner"><div class="panel-heading"><div><p class="eyebrow">Your draft schedule</p><h3 id="plan-title">My year</h3></div><span id="plan-total" class="plan-total">0 courses</span></div><p class="plan-intro">A flexible sketch, not registration. Open each catalog listing before you enroll.</p><div id="plan-terms"></div><div id="plan-issues" class="plan-issues" aria-live="polite"></div><div class="plan-actions"><button id="copy-plan" type="button" class="button-secondary">Copy plan summary</button><button id="clear-plan" type="button" class="text-button">Clear plan</button></div></div></aside></div></section>
+
+    <section class="about-section"><div class="wrap about-grid"><div><p class="eyebrow">The Evergreen approach</p><h2>Go deep. Wander widely.</h2></div><div><p>Evergreen’s interdisciplinary programs can bring several subjects together in a substantial quarter-long experience. Smaller courses can give you room to test a new field, practice a skill, or follow a curiosity.</p><p>This independent planning tool uses Evergreen’s public catalog. Course availability, credits, modes, times, and enrollment conditions can change; verify details on each official listing and with an advisor before registering.</p><a href="https://www.evergreen.edu/catalog/" target="_blank" rel="noopener">Visit Evergreen’s official catalog ↗</a></div></div></section>
+  </main>
+  <footer class="site-footer"><div class="wrap footer-inner"><span>✳ Evergreen Course Map</span><span>Independent student planning tool · <a href="https://www.evergreen.edu/" target="_blank" rel="noopener">The Evergreen State College ↗</a></span></div></footer>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

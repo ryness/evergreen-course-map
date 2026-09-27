@@ -1,0 +1,60 @@
+name: Refresh catalog and publish site
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 8 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      deployment: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Refresh the newest catalog
+        if: github.event_name != 'push'
+        run: |
+          pip install -r requirements.txt
+          python scripts/sync_catalog.py
+      - name: Check planner and catalog data
+        run: node --experimental-default-type=module --test tests/planner.test.mjs
+      - name: Commit refreshed snapshot
+        if: github.event_name != 'push'
+        run: |
+          if ! git diff --quiet -- data; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add data
+            git commit -m 'Refresh Evergreen catalog snapshot'
+            git push
+          fi
+      - name: Prepare static site
+        run: |
+          mkdir -p _site/data
+          cp index.html styles.css app.js planner.js favicon.svg .nojekyll _site/
+          cp data/*.json _site/data/
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

@@ -77,6 +77,7 @@ function pinControl(course, term, pinned, className = 'choice-pin') {
 function excludedIds() { return state.excluded[state.prefs.academicYear] || []; }
 function recommendationPrefs() { return { ...state.prefs, excludedCourseIds: excludedIds() }; }
 function planCount() { return TERMS.reduce((n, term) => n + (currentPlan()[term] || []).length, 0); }
+function plannedIds(term) { return new Set((currentPlan()[term] || []).map(item => item.id)); }
 function togglePinCourse(id, term, credits) {
   const course = byId().get(id);
   if (!course || !TERMS.includes(term)) return;
@@ -99,7 +100,8 @@ function togglePinCourse(id, term, credits) {
 }
 function matchingCourses() {
   const excluded = new Set(excludedIds());
-  return catalog().filter(course => !excluded.has(course.id) && offeringAvailable(course, state.term, state.prefs))
+  const planned = plannedIds(state.term);
+  return catalog().filter(course => !excluded.has(course.id) && !planned.has(course.id) && offeringAvailable(course, state.term, state.prefs))
     .filter(course => !state.creditFilter || course.credits.includes(state.creditFilter))
     .filter(course => !state.query || `${course.title} ${course.description} ${(course.fields || []).join(' ')}`.toLowerCase().includes(state.query));
 }
@@ -161,10 +163,10 @@ function renderCourses() {
   else if (state.sort === 'credits') results.sort((a,b) => Math.max(...b.credits) - Math.max(...a.credits) || a.title.localeCompare(b.title));
   else results.sort((a,b) => relevance(b) - relevance(a) || a.title.localeCompare(b.title));
   const hasGoals = Boolean(state.prefs.careerGoals || state.prefs.academicFocus || state.prefs.otherInterests || state.prefs.dislikedFields);
-  $('result-count').textContent = `${results.length} ${results.length === 1 ? 'offering' : 'offerings'} for ${state.term.toLowerCase()}${state.creditFilter ? ` · offering ${state.creditFilter} credits` : ''}${hasGoals && state.sort === 'relevance' ? ' · ranked by your goals' : ''}`;
+  const plannedCount = plannedIds(state.term).size;
+  $('result-count').textContent = `${results.length} ${results.length === 1 ? 'offering' : 'offerings'} for ${state.term.toLowerCase()}${state.creditFilter ? ` · offering ${state.creditFilter} credits` : ''}${hasGoals && state.sort === 'relevance' ? ' · ranked by your goals' : ''}${plannedCount ? ` · ${plannedCount} already in your ${state.term.toLowerCase()} plan` : ''}`;
   const shown = results.slice(0, state.visible);
   $('course-list').innerHTML = shown.length ? shown.map(course => {
-    const inPlan = (currentPlan()[state.term] || []).some(item => item.id === course.id);
     const pinned = isPinned(course.id, state.term);
     const comparing = state.compare.some(item => item.id === course.id && item.term === state.term);
     const availableCredits = course.credits;
@@ -177,8 +179,8 @@ function renderCourses() {
     const otherTerms = offeredTerms.filter(term => term !== state.term);
     const status = course.offerings?.[state.term]?.status || '';
     const choices = `<div class="course-choice-actions">${pinControl(course, state.term, pinned)}${isPinnedAnywhere(course.id) ? '' : `<button class="exclude-button" type="button" data-exclude="${escapeHtml(course.id)}" aria-label="Exclude ${escapeHtml(course.title)} from suggestions">Not for me</button>`}</div>`;
-    return `<article class="course-card" data-course="${escapeHtml(course.id)}"><div class="course-top"><a class="course-title" href="${escapeHtml(course.url)}" target="_blank" rel="noopener">${escapeHtml(course.title)} ↗</a>${choices}</div><div class="course-meta"><span class="pill gold">${escapeHtml(course.type)}</span><span class="pill">${escapeHtml(mode)}</span><span class="pill neutral">${escapeHtml(course.credits.join(' or '))} cr</span>${alreadyTaken ? '<span class="pill taken">Listed as already taken</span>' : ''}${location ? `<span class="pill neutral">${escapeHtml(location)}</span>` : ''}${otherTerms.length ? `<span class="pill neutral">Also ${escapeHtml(otherTerms.join(' + '))}</span>` : ''}${status === 'Conditional' ? '<span class="pill gold">Conditional entry</span>' : ''}${course.prerequisites && !/^none\b|^no prerequisites/i.test(course.prerequisites) ? '<span class="pill gold">Entry requirements</span>' : ''}</div><p class="course-desc">${escapeHtml(course.description || (course.fields || []).join(' · ') || 'Read the official catalog entry for course details.')}</p>${schedule ? `<p class="course-extra">Meets ${escapeHtml(schedule)}${course.timeOffered ? ` · ${escapeHtml(course.timeOffered)}` : ''}</p>` : '<p class="course-extra">Meeting times: see official schedule</p>'}<div class="course-actions"><div class="course-links"><a href="${escapeHtml(course.scheduleUrl || course.url)}" target="_blank" rel="noopener">${course.scheduleUrl ? 'Full schedule' : 'Catalog details'} ↗</a><button class="compare-button" type="button" data-compare="${course.id}">${comparing ? 'Remove comparison' : 'Compare'}</button></div><div class="credit-picker"><label for="credits-${course.id}">Credits</label><select id="credits-${course.id}" data-credit-for="${course.id}">${availableCredits.map(n => `<option value="${n}" ${n === preferred ? 'selected' : ''}>${n}</option>`).join('')}</select><button class="add-button" type="button" data-add="${course.id}" ${inPlan ? 'disabled' : ''}>${inPlan ? 'Added' : `Add to ${state.term}`}</button></div></div>${otherTerms.length ? `<button type="button" class="add-all" data-add-all="${course.id}">Add ${escapeHtml(offeredTerms.join(' + '))}</button>` : ''}</article>`;
-  }).join('') : `<div class="empty-state"><strong>No courses match this view.</strong><br>Try another quarter, credit value, format, or search phrase.</div>`;
+    return `<article class="course-card" data-course="${escapeHtml(course.id)}"><div class="course-top"><a class="course-title" href="${escapeHtml(course.url)}" target="_blank" rel="noopener">${escapeHtml(course.title)} ↗</a>${choices}</div><div class="course-meta"><span class="pill gold">${escapeHtml(course.type)}</span><span class="pill">${escapeHtml(mode)}</span><span class="pill neutral">${escapeHtml(course.credits.join(' or '))} cr</span>${alreadyTaken ? '<span class="pill taken">Listed as already taken</span>' : ''}${location ? `<span class="pill neutral">${escapeHtml(location)}</span>` : ''}${otherTerms.length ? `<span class="pill neutral">Also ${escapeHtml(otherTerms.join(' + '))}</span>` : ''}${status === 'Conditional' ? '<span class="pill gold">Conditional entry</span>' : ''}${course.prerequisites && !/^none\b|^no prerequisites/i.test(course.prerequisites) ? '<span class="pill gold">Entry requirements</span>' : ''}</div><p class="course-desc">${escapeHtml(course.description || (course.fields || []).join(' · ') || 'Read the official catalog entry for course details.')}</p>${schedule ? `<p class="course-extra">Meets ${escapeHtml(schedule)}${course.timeOffered ? ` · ${escapeHtml(course.timeOffered)}` : ''}</p>` : '<p class="course-extra">Meeting times: see official schedule</p>'}<div class="course-actions"><div class="course-links"><a href="${escapeHtml(course.scheduleUrl || course.url)}" target="_blank" rel="noopener">${course.scheduleUrl ? 'Full schedule' : 'Catalog details'} ↗</a><button class="compare-button" type="button" data-compare="${course.id}">${comparing ? 'Remove comparison' : 'Compare'}</button></div><div class="credit-picker"><label for="credits-${course.id}">Credits</label><select id="credits-${course.id}" data-credit-for="${course.id}">${availableCredits.map(n => `<option value="${n}" ${n === preferred ? 'selected' : ''}>${n}</option>`).join('')}</select><button class="add-button" type="button" data-add="${course.id}">Add to ${state.term}</button></div></div>${otherTerms.length ? `<button type="button" class="add-all" data-add-all="${course.id}">Add ${escapeHtml(offeredTerms.join(' + '))}</button>` : ''}</article>`;
+  }).join('') : `<div class="empty-state"><strong>No courses match this view.</strong><br>Try another quarter, credit value, format, or search phrase. Courses already in this quarter of My year are hidden here until you remove them from the plan.</div>`;
   $('load-more').hidden = results.length <= state.visible;
   $('load-more').textContent = `Show more courses (${results.length - state.visible} remaining)`;
 }

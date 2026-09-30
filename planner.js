@@ -159,3 +159,39 @@ export function reviewPlan(plan, courses, prefs) {
   const checks = findings.filter(item => item.severity === 'check');
   return { quarters, selectedCount, blockers, checks, findings };
 }
+
+export function capturePlan({ id, name, academicYear, prefs, plan, courses, savedAt }) {
+  const lookup = new Map(courses.map(course => [course.id, course]));
+  const terms = Object.fromEntries(TERMS.map(term => [term, (plan[term] || []).map(item => {
+    const course = lookup.get(item.id);
+    return {
+      id: item.id,
+      credits: Number(item.credits),
+      pinned: Boolean(item.pinned),
+      title: course?.title || 'Course no longer in catalog',
+      url: course?.url || '',
+      mode: course?.modes?.[term] || 'Format TBA',
+      meetingTimes: course ? compactMeetingTimes(course, term) : 'Meeting times not published',
+    };
+  })]));
+  return { id, name: name.trim().slice(0, 80), academicYear, savedAt, prefs: { ...prefs, formats: [...prefs.formats] }, terms };
+}
+
+export function draftFromSaved(snapshot) {
+  return Object.fromEntries(TERMS.map(term => [term, snapshot.terms[term].map(({ id, credits, pinned }) =>
+    ({ id, credits, ...(pinned ? { pinned: true } : {}) }))]));
+}
+
+export function savedCredits(snapshot, term) {
+  return (snapshot.terms[term] || []).reduce((sum, entry) => sum + entry.credits, 0);
+}
+
+export function validSavedPlan(snapshot) {
+  return Boolean(snapshot && typeof snapshot.id === 'string' && typeof snapshot.name === 'string' && snapshot.name.trim()
+    && typeof snapshot.academicYear === 'string' && typeof snapshot.savedAt === 'string'
+    && snapshot.prefs && typeof snapshot.prefs === 'object'
+    && TERMS.every(term => Array.isArray(snapshot.terms?.[term]) && snapshot.terms[term].every(entry =>
+      entry && typeof entry.id === 'string' && typeof entry.title === 'string'
+      && Number.isFinite(entry.credits) && entry.credits > 0 && entry.credits <= 20
+      && typeof entry.mode === 'string' && typeof entry.meetingTimes === 'string')));
+}

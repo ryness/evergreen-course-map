@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { compactMeetingTimes, courseConflict, offeringAvailable, planIssues, reviewPlan, TERMS } from '../planner.js';
+import { capturePlan, compactMeetingTimes, courseConflict, draftFromSaved, offeringAvailable, planIssues, reviewPlan, savedCredits, TERMS, validSavedPlan } from '../planner.js';
 import { THEMES, courseAlreadyTaken, courseRelevance, replacementSuggestions, spinQuarterPlan, suggestThemePlan } from '../recommend.js';
 
 const meeting = (day, start, end, weeks = [1, 2, 3]) => ({ day, start, end, weeks });
@@ -230,4 +230,32 @@ test('published catalog has unique, linked undergraduate offerings', () => {
     assert.ok(snapshot.courses.some(course => /Street Level Democracy/.test(course.title)));
     assert.ok(snapshot.courses.some(course => /Supreme Court/.test(course.title)));
   }
+});
+
+test('named snapshots preserve each quarter, its published details, and pinned choices', () => {
+  const course = {
+    id: 'writing', title: 'Community Writing', url: 'https://www.evergreen.edu/catalog/offering/community-writing',
+    modes: { Fall: 'Hybrid', Winter: 'Remote' },
+    meetings: { Fall: [{ day: 'Mon', start: 600, end: 720, weeks: [1, 2] }], Winter: [] },
+  };
+  const plan = { Fall: [{ id: 'writing', credits: 4, pinned: true }], Winter: [{ id: 'writing', credits: 8 }], Spring: [] };
+  const preferences = { standing: 'Sophomore', target: 20, formats: ['Hybrid', 'Remote'], academicFocus: 'writing' };
+  const snapshot = capturePlan({ id: 'saved-1', name: '  Writing path  ', academicYear: '2026-27', savedAt: '2026-09-30T12:00:00.000Z', prefs: preferences, plan, courses: [course] });
+  assert.equal(validSavedPlan(snapshot), true);
+  assert.equal(snapshot.name, 'Writing path');
+  assert.equal(snapshot.terms.Fall[0].meetingTimes, 'M 10am–12pm');
+  assert.equal(snapshot.terms.Fall[0].mode, 'Hybrid');
+  assert.equal(snapshot.terms.Winter[0].meetingTimes, 'Meeting times not published');
+  assert.equal(savedCredits(snapshot, 'Fall'), 4);
+  assert.equal(savedCredits(snapshot, 'Winter'), 8);
+  assert.deepEqual(draftFromSaved(snapshot), plan);
+  plan.Fall[0].credits = 16;
+  preferences.formats.pop();
+  assert.equal(snapshot.terms.Fall[0].credits, 4);
+  assert.deepEqual(snapshot.prefs.formats, ['Hybrid', 'Remote']);
+});
+
+test('malformed saved plans are rejected before display or reopening', () => {
+  assert.equal(validSavedPlan(null), false);
+  assert.equal(validSavedPlan({ id: 'x', name: 'Broken', academicYear: '2026-27', savedAt: 'today', prefs: {}, terms: { Fall: [] } }), false);
 });

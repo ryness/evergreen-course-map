@@ -7,8 +7,8 @@
   <meta name="description" content="Tell us your interests and explore relevant Evergreen course combinations.">
   <title>Evergreen Course Mapper</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="styles.css?v=20261001-quickref">
-  <script type="module" src="app.js?v=20261001-quickref"></script>
+  <link rel="stylesheet" href="styles.css?v=20261001-save-update">
+  <script type="module" src="app.js?v=20261001-save-update"></script>
 </head>
 <body>
   <header class="site-header">
@@ -26,7 +26,7 @@
 
     <section id="my-plans" class="saved-plans-section" aria-labelledby="my-plans-title"><div class="wrap">
       <div class="saved-plans-heading"><div><p class="eyebrow">Keep your options open</p><h2 id="my-plans-title">My plans</h2><p>Save different fall, winter, and spring combinations. Named plans stay in this browser on this device. Opening one replaces that year’s current draft and restores its goals.</p></div></div>
-      <form id="save-plan-form" class="save-plan-form"><label for="plan-name">Name your current draft</label><div class="save-plan-controls"><input id="plan-name" type="text" maxlength="80" required placeholder="e.g. Writing and public policy"><button class="button-primary" type="submit">Save this plan</button><button id="print-current" class="button-secondary" type="button">Print current plan / Save PDF</button></div><p class="save-plan-note">To make a PDF, choose “Save as PDF” in your browser’s print dialog. The layout is designed to fit most plans on one page.</p></form>
+      <form id="save-plan-form" class="save-plan-form"><div class="save-plan-destination"><label for="save-destination">Save draft to</label><select id="save-destination"><option value="">New plan</option></select></div><label for="plan-name">Plan name</label><div class="save-plan-controls"><input id="plan-name" type="text" maxlength="80" required placeholder="e.g. Writing and public policy"><button id="save-plan-button" class="button-primary" type="submit">Save new plan</button><button id="print-current" class="button-secondary" type="button">Print current plan / Save PDF</button></div><p id="save-destination-hint" class="save-plan-target-note" aria-live="polite">Save your current My year draft as a new named plan.</p><p class="save-plan-note">To make a PDF, choose “Save as PDF” in your browser’s print dialog. The layout is designed to fit most plans on one page.</p></form>
       <div id="saved-plans-list" class="saved-plans-list" aria-live="polite"></div>
     </div></section>
 

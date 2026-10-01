@@ -7,7 +7,7 @@ const SAVED_PLANS_KEY = 'evergreen-course-map-named-plans-v1';
 const $ = id => document.getElementById(id);
 const emptyPlan = () => Object.fromEntries(TERMS.map(term => [term, []]));
 const defaults = { academicYear: '', standing: 'Freshman', target: 16, location: 'Any location', careerGoals: '', academicFocus: '', otherInterests: '', dislikedFields: '', completedCourses: '', formats: [...FORMATS] };
-const state = { prefs: { ...defaults }, plans: {}, themes: {}, spins: {}, excluded: {}, savedPlans: [], savedPlansAvailable: true, compare: [], replacement: null, term: 'Fall', query: '', creditFilter: 0, sort: 'relevance', visible: 18, data: null, manifest: null };
+const state = { prefs: { ...defaults }, plans: {}, themes: {}, spins: {}, excluded: {}, savedPlans: [], activeSavedPlanId: '', savedPlansAvailable: true, compare: [], replacement: null, term: 'Fall', query: '', creditFilter: 0, sort: 'relevance', visible: 18, data: null, manifest: null };
 const ILC = ilcOffering();
 let toastTimer, goalsTimer, suggestionsTimer;
 
@@ -37,6 +37,7 @@ function readCookie() {
     }
     if (Array.isArray(data.compare)) state.compare = data.compare.filter(item => item && typeof item.id === 'string' && TERMS.includes(item.term)).slice(0, 3);
     if (Number.isInteger(data.creditFilter) && data.creditFilter > 0) state.creditFilter = data.creditFilter;
+    if (typeof data.activeSavedPlanId === 'string') state.activeSavedPlanId = data.activeSavedPlanId;
   } catch { /* An old or malformed cookie should not stop the planner. */ }
 }
 
@@ -74,7 +75,7 @@ function persistSavedPlans(plans) {
 }
 
 function save() {
-  const value = encodeURIComponent(JSON.stringify({ prefs: state.prefs, plans: state.plans, themes: state.themes, spins: state.spins, compare: state.compare, creditFilter: state.creditFilter }));
+  const value = encodeURIComponent(JSON.stringify({ prefs: state.prefs, plans: state.plans, themes: state.themes, spins: state.spins, compare: state.compare, creditFilter: state.creditFilter, activeSavedPlanId: state.activeSavedPlanId }));
   const excludedValue = encodeURIComponent(JSON.stringify(state.excluded));
   const path = location.pathname.replace(/[^/]*$/, '') || '/';
   document.cookie = `${COOKIE}=${value}; Max-Age=31536000; Path=${path}; SameSite=Lax${location.protocol === 'https:' ? '; Secure' : ''}`;
@@ -110,12 +111,26 @@ function currentSnapshot(name) {
   });
 }
 
+function renderSaveDestination() {
+  const plans = state.savedPlans.filter(item => item.academicYear === state.prefs.academicYear);
+  const active = plans.find(item => item.id === state.activeSavedPlanId);
+  if (state.prefs.academicYear && !active) state.activeSavedPlanId = '';
+  $('save-destination').innerHTML = '<option value="">New plan</option>' + plans.map(item => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join('');
+  $('save-destination').value = active?.id || '';
+  $('plan-name').value = active?.name || '';
+  $('save-plan-button').textContent = active ? 'Update saved plan' : 'Save new plan';
+  $('save-destination-hint').textContent = active
+    ? `Updating ${active.name} will replace its saved courses and goals with your current My year draft.`
+    : 'Save your current My year draft as a new named plan.';
+}
+
 function renderSavedPlans() {
   const list = $('saved-plans-list');
   if (!state.savedPlansAvailable) {
     list.innerHTML = '<p class="saved-plans-empty">This browser is not allowing local plan storage. Printing the current draft is still available.</p>';
     $('plan-name').disabled = true;
-    $('save-plan-form').querySelector('[type="submit"]').disabled = true;
+    $('save-destination').disabled = true;
+    $('save-plan-button').disabled = true;
     return;
   }
   list.innerHTML = state.savedPlans.length ? state.savedPlans.map(snapshot => {
@@ -124,6 +139,7 @@ function renderSavedPlans() {
     const quarters = TERMS.map(term => `${term} ${savedCredits(snapshot, term)} cr`).join(' · ');
     return `<article class="saved-plan-card"><div class="saved-plan-head"><h3>${escapeHtml(snapshot.name)}</h3><details class="saved-plan-menu"><summary aria-label="More options for ${escapeHtml(snapshot.name)}" title="More options">⋯</summary><button type="button" data-remove-saved="${escapeHtml(snapshot.id)}">Remove saved plan</button></details></div><p class="saved-plan-facts">${escapeHtml(snapshot.academicYear)} · ${escapeHtml(saved)}</p><p class="saved-plan-quarters">${escapeHtml(quarters)}</p><div class="saved-plan-actions"><button class="button-secondary" type="button" data-open-saved="${escapeHtml(snapshot.id)}">Open in My Year</button><button class="button-secondary" type="button" data-print-saved="${escapeHtml(snapshot.id)}">PDF</button><button class="button-secondary" type="button" data-quickref-saved="${escapeHtml(snapshot.id)}">QuickRef</button></div></article>`;
   }).join('') : '<p class="saved-plans-empty">No named plans yet. Build a draft in My year, then save it here to compare options.</p>';
+  renderSaveDestination();
 }
 
 function showQuickRef(snapshot) {
@@ -187,6 +203,9 @@ async function openSavedPlan(snapshot) {
   save();
   if (state.data?.academicYear === snapshot.academicYear) render();
   else await loadYear(snapshot.academicYear);
+  state.activeSavedPlanId = snapshot.id;
+  renderSavedPlans();
+  save();
   const missing = TERMS.reduce((count, term) => count + draft[term].filter(entry => !byId().has(entry.id)).length, 0);
   notify(missing ? `Plan opened. ${missing} course${missing === 1 ? '' : 's'} no longer in the catalog; check Final review.` : `Opened ${snapshot.name} in My year.`);
   $('plan').scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -396,13 +415,14 @@ async function loadYear(year) {
     const response = await fetch(`data/${record.file}`, { cache: 'no-cache' });
     if (!response.ok) throw new Error(`Catalog request returned ${response.status}`);
     state.data = await response.json();
+    if (state.prefs.academicYear && state.prefs.academicYear !== year) state.activeSavedPlanId = '';
     state.prefs.academicYear = year;
     state.plans[year] ||= emptyPlan();
     state.themes[year] ||= 'custom';
     state.excluded[year] = (state.excluded[year] || []).filter(id => id === ILC_ID || state.data.courses.some(course => course.id === id));
     state.replacement = null;
     syncGoalInputs();
-    save(); render();
+    save(); render(); renderSavedPlans();
   } catch (error) {
     $('result-count').textContent = 'Could not load the catalog. Please reload the page.';
     console.error(error);
@@ -410,14 +430,26 @@ async function loadYear(year) {
 }
 
 function events() {
+  $('save-destination').addEventListener('change', event => {
+    state.activeSavedPlanId = event.target.value;
+    renderSaveDestination();
+    save();
+  });
   $('save-plan-form').addEventListener('submit', event => {
     event.preventDefault();
     if (!state.data) { notify('Wait for the catalog to load before saving a plan.'); return; }
     if (!planCount()) { notify('Add at least one course to My year before saving a plan.'); return; }
-    const snapshot = currentSnapshot($('plan-name').value);
-    if (persistSavedPlans([snapshot, ...state.savedPlans])) {
-      $('plan-name').value = '';
-      notify(`Saved ${snapshot.name} in My plans.`);
+    const name = $('plan-name').value.trim();
+    if (!name) { $('plan-name').focus(); notify('Enter a plan name before saving.'); return; }
+    const snapshot = currentSnapshot(name);
+    const existing = state.savedPlans.find(item => item.id === state.activeSavedPlanId && item.academicYear === state.prefs.academicYear);
+    if (existing) snapshot.id = existing.id;
+    const plans = existing ? state.savedPlans.map(item => item.id === existing.id ? snapshot : item) : [snapshot, ...state.savedPlans];
+    if (persistSavedPlans(plans)) {
+      state.activeSavedPlanId = snapshot.id;
+      renderSavedPlans();
+      save();
+      notify(existing ? `Updated ${snapshot.name} in My plans.` : `Saved ${snapshot.name} in My plans.`);
     }
   });
   $('print-current').addEventListener('click', () => {
@@ -434,7 +466,7 @@ function events() {
     else if (button.dataset.printSaved) printPlan(snapshot);
     else if (button.dataset.quickrefSaved) showQuickRef(snapshot);
     else if (window.confirm(`Remove “${snapshot.name}” from My plans? This cannot be undone.`)) {
-      if (persistSavedPlans(state.savedPlans.filter(item => item.id !== id))) notify('Saved plan removed.');
+      if (persistSavedPlans(state.savedPlans.filter(item => item.id !== id))) { save(); notify('Saved plan removed.'); }
     }
   });
   $('quickref-dialog').addEventListener('click', event => {
@@ -638,11 +670,11 @@ function events() {
     state.prefs = { ...defaults, formats: [...FORMATS], academicYear: state.manifest.catalogs[0].academicYear };
     state.plans = Object.fromEntries(Object.entries(state.plans).map(([year, plan]) =>
       [year, Object.fromEntries(TERMS.map(term => [term, (plan[term] || []).filter(item => item.pinned)]))]));
-    state.themes = {}; state.spins = {}; state.excluded = {}; state.replacement = null; state.compare = [];
+    state.themes = {}; state.spins = {}; state.excluded = {}; state.replacement = null; state.compare = []; state.activeSavedPlanId = '';
     state.term = 'Fall'; state.query = ''; state.creditFilter = 0;
     $('search').value = ''; $('sort').value = 'relevance'; state.sort = 'relevance'; state.visible = 18;
     syncGoalInputs(); save();
-    if (state.data.academicYear === state.prefs.academicYear) render();
+    if (state.data.academicYear === state.prefs.academicYear) { render(); renderSavedPlans(); }
     else loadYear(state.prefs.academicYear);
     notify('Other choices reset. Your Yes for me courses remain.');
   });

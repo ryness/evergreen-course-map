@@ -2,6 +2,19 @@ export const TERMS = ["Fall", "Winter", "Spring"];
 export const STANDINGS = ["Freshman", "Sophomore", "Junior", "Senior"];
 export const FORMATS = ["In person", "Hybrid", "Remote"];
 
+export const ILC_ID = 'individual-learning-contract';
+export const ILC_CREDITS = [2, 4, 6, 8, 10, 12, 14, 16];
+export function ilcOffering() {
+  return {
+    id: ILC_ID, isIlc: true, title: 'Individual Learning Contract (ILC)', type: 'ILC',
+    url: 'https://www.evergreen.edu/academics/experiential-learning/individual-study',
+    description: 'Design your own independent study with a faculty or staff sponsor. Choose a credit amount and working title for your draft; the contract, workload, and schedule need sponsor and college approval.',
+    credits: [...ILC_CREDITS], standings: [...STANDINGS], fields: ['Individual study'],
+    offerings: Object.fromEntries(TERMS.map(term => [term, { status: 'By arrangement' }])),
+    meetings: Object.fromEntries(TERMS.map(term => [term, []])),
+  };
+}
+
 export const INTERESTS = [
   { id: "writing", label: "Writing & literature", test: /creative writing|literature|poetry|poetics|fiction|journalism|rhetoric|publishing|memoir|storytell/i },
   { id: "law", label: "Law & public policy", test: /\blaw\b|legal|justice|public policy|government|constitutional|supreme court|legislati|civic/i },
@@ -23,6 +36,7 @@ export const INTERESTS = [
 export function offeringAvailable(course, term, prefs) {
   if (!course.offerings?.[term] || !course.standings?.includes(prefs.standing)) return false;
   if (/closed|cancel/i.test(course.offerings[term].status || "")) return false;
+  if (course.isIlc) return (course.credits || []).length > 0;
   const mode = course.modes?.[term];
   if (mode && !prefs.formats.includes(mode)) return false;
   if (prefs.location && prefs.location !== "Any location" && course.location !== prefs.location && mode !== "Remote") return false;
@@ -64,6 +78,7 @@ const DAY_ORDER = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const SHORT_DAY = { Mon: 'M', Tue: 'Tu', Wed: 'W', Thu: 'Th', Fri: 'F', Sat: 'Sa', Sun: 'Su' };
 
 export function compactMeetingTimes(course, term) {
+  if (course.isIlc) return 'Schedule arranged with sponsor';
   const meetings = course.meetings?.[term] || [];
   if (!meetings.length) return 'Meeting times not published';
   const groups = new Map();
@@ -101,7 +116,8 @@ export function planIssues(plan, courses, target) {
     if (total > 20) issues.push({ term, kind: "over", text: `${term}: ${total} credits exceeds Evergreen’s usual 20-credit limit.` });
     for (let i = 0; i < entries.length; i++) {
       const a = byId.get(entries[i].id);
-      if (!(a.meetings?.[term] || []).length) issues.push({ term, kind: "unknown", text: `${a.title}: weekly meeting times are not published here; check before relying on this combination.` });
+      if (a.isIlc) issues.push({ term, kind: "unknown", text: `${term} ILC: confirm sponsorship, contract approval, eligibility, and meeting schedule for ${entries[i].credits} credits.` });
+      else if (!(a.meetings?.[term] || []).length) issues.push({ term, kind: "unknown", text: `${a.title}: weekly meeting times are not published here; check before relying on this combination.` });
       if (/conditional/i.test(a.offerings?.[term]?.status || "")) issues.push({ term, kind: "unknown", text: `${a.title}: ${term} entry is conditional; confirm with Evergreen.` });
       if (a.prerequisites && !/^none\b|^no prerequisites/i.test(a.prerequisites)) issues.push({ term, kind: "unknown", text: `${a.title}: check the entry requirements on the official listing.` });
       for (let j = i + 1; j < entries.length; j++) {
@@ -112,6 +128,7 @@ export function planIssues(plan, courses, target) {
     }
   }
   for (const course of courses) {
+    if (course.isIlc) continue;
     const offered = TERMS.filter(term => course.offerings?.[term]);
     const selected = offered.filter(term => (plan[term] || []).some(item => item.id === course.id));
     if (offered.length > 1 && selected.length && selected.length < offered.length) {
@@ -152,7 +169,7 @@ export function reviewPlan(plan, courses, prefs) {
       if (!course.credits?.includes(Number(entry.credits))) findings.push({ term, kind: 'credits', severity: 'blocker', text: `${term}: ${entry.credits} credits is not a listed option for ${course.title}.` });
       const mode = course.modes?.[term];
       if (mode && Array.isArray(prefs.formats) && !prefs.formats.includes(mode)) findings.push({ term, kind: 'format', severity: 'check', text: `${term}: ${course.title} is ${mode.toLowerCase()}, outside your selected learning formats.` });
-      if (prefs.location && prefs.location !== 'Any location' && course.location !== prefs.location && mode !== 'Remote') findings.push({ term, kind: 'location', severity: 'check', text: `${term}: ${course.title} is at ${course.location || 'another location'}, outside your selected campus.` });
+      if (!course.isIlc && prefs.location && prefs.location !== 'Any location' && course.location !== prefs.location && mode !== 'Remote') findings.push({ term, kind: 'location', severity: 'check', text: `${term}: ${course.title} is at ${course.location || 'another location'}, outside your selected campus.` });
     }
   }
   const blockers = findings.filter(item => item.severity === 'blocker');
@@ -164,13 +181,15 @@ export function capturePlan({ id, name, academicYear, prefs, plan, courses, save
   const lookup = new Map(courses.map(course => [course.id, course]));
   const terms = Object.fromEntries(TERMS.map(term => [term, (plan[term] || []).map(item => {
     const course = lookup.get(item.id);
+    const note = course?.isIlc ? String(item.note || '').trim().slice(0, 80) : '';
     return {
       id: item.id,
       credits: Number(item.credits),
       pinned: Boolean(item.pinned),
-      title: course?.title || 'Course no longer in catalog',
+      ...(note ? { note } : {}),
+      title: note ? `ILC: ${note}` : course?.title || 'Course no longer in catalog',
       url: course?.url || '',
-      mode: course?.modes?.[term] || 'Format TBA',
+      mode: course?.isIlc ? 'Independent study' : course?.modes?.[term] || 'Format TBA',
       meetingTimes: course ? compactMeetingTimes(course, term) : 'Meeting times not published',
     };
   })]));
@@ -178,8 +197,8 @@ export function capturePlan({ id, name, academicYear, prefs, plan, courses, save
 }
 
 export function draftFromSaved(snapshot) {
-  return Object.fromEntries(TERMS.map(term => [term, snapshot.terms[term].map(({ id, credits, pinned }) =>
-    ({ id, credits, ...(pinned ? { pinned: true } : {}) }))]));
+  return Object.fromEntries(TERMS.map(term => [term, snapshot.terms[term].map(({ id, credits, pinned, note }) =>
+    ({ id, credits, ...(pinned ? { pinned: true } : {}), ...(id === ILC_ID && note ? { note: String(note).slice(0, 80) } : {}) }))]));
 }
 
 export function savedCredits(snapshot, term) {

@@ -1,4 +1,4 @@
-import { TERMS, INTERESTS, offeringAvailable, courseConflict } from './planner.js?v=20260927-final-review';
+import { TERMS, INTERESTS, offeringAvailable, courseConflict } from './planner.js?v=20261001-ilc';
 
 export const THEMES = [
   { id: 'core', label: 'Deep in my core academic interest', hint: 'Substantial interdisciplinary programs centered on your main subject.' },
@@ -232,7 +232,7 @@ function suggestQuarter(courses, prefs, term, themeId, initial = [], previousTit
   const knownIds = new Set(selected.map(item => item.course.id));
   const missingPinned = initial.filter(item => item.pinned && !knownIds.has(item.id));
   return [...missingPinned, ...selected.map(item => item.pinned
-    ? { id: item.course.id, credits: item.credits, pinned: true }
+    ? { id: item.course.id, credits: item.credits, pinned: true, ...(item.note ? { note: item.note } : {}) }
     : { id: item.course.id, credits: item.credits })];
 }
 

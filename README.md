@@ -8,6 +8,8 @@ An independent, shareable course planner for [The Evergreen State College](https
 
 The site shows undergraduate offerings and published meeting times when available. Planning suggestions are heuristic; they are not admissions, registration, advising, or enrollment decisions. Always open the official listing to check current credits, prerequisites, location, schedule, fees, and space.
 
+Explore Courses also includes a planner-only Individual Learning Contract (ILC) option in each quarter. Students can choose 2–16 credits in two-credit steps and enter a working title after adding it. An ILC is arranged with a sponsor and requires college approval; the final review calls this out. Its title and credits are preserved in named plans and printouts.
+
 ## Run locally
 
 ```sh

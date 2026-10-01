@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { capturePlan, compactMeetingTimes, courseConflict, draftFromSaved, offeringAvailable, planIssues, reviewPlan, savedCredits, TERMS, validSavedPlan } from '../planner.js';
+import { capturePlan, compactMeetingTimes, courseConflict, draftFromSaved, ilcOffering, offeringAvailable, planIssues, reviewPlan, savedCredits, TERMS, validSavedPlan } from '../planner.js';
 import { THEMES, courseAlreadyTaken, courseRelevance, replacementSuggestions, spinQuarterPlan, suggestThemePlan } from '../recommend.js';
 
 const meeting = (day, start, end, weeks = [1, 2, 3]) => ({ day, start, end, weeks });
@@ -258,4 +258,28 @@ test('named snapshots preserve each quarter, its published details, and pinned c
 test('malformed saved plans are rejected before display or reopening', () => {
   assert.equal(validSavedPlan(null), false);
   assert.equal(validSavedPlan({ id: 'x', name: 'Broken', academicYear: '2026-27', savedAt: 'today', prefs: {}, terms: { Fall: [] } }), false);
+});
+
+test('ILC is available every quarter with the undergraduate credit grid and needs sponsor review', () => {
+  const ilc = ilcOffering();
+  assert.deepEqual(ilc.credits, [2, 4, 6, 8, 10, 12, 14, 16]);
+  for (const term of TERMS) {
+    assert.equal(offeringAvailable(ilc, term, { ...prefs, location: 'Tacoma', formats: ['Remote'] }), true);
+  }
+  const four = makeCourse('four', 'Seminar', 4, [meeting('Mon', 600, 720)]);
+  const two = makeCourse('two', 'Workshop', 2, [meeting('Tue', 600, 720)]);
+  const plan = { Fall: [{ id: 'four', credits: 4 }, { id: 'two', credits: 2 }, { id: ilc.id, credits: 10, pinned: true, note: 'Local journalism' }], Winter: [], Spring: [] };
+  const review = reviewPlan(plan, [four, two, ilc], { ...prefs, target: 16 });
+  assert.equal(review.quarters[0].credits, 16);
+  assert.equal(review.blockers.length, 0);
+  assert.ok(review.checks.some(item => /sponsorship, contract approval, eligibility, and meeting schedule for 10 credits/.test(item.text)));
+  assert.ok(!review.checks.some(item => /spans Fall/.test(item.text)));
+  const snapshot = capturePlan({ id: 'ilc-plan', name: 'My ILC', academicYear: '2026-27', savedAt: '2026-10-01T12:00:00.000Z', prefs, plan, courses: [four, two, ilc] });
+  assert.equal(snapshot.terms.Fall[2].title, 'ILC: Local journalism');
+  assert.equal(snapshot.terms.Fall[2].mode, 'Independent study');
+  assert.equal(snapshot.terms.Fall[2].meetingTimes, 'Schedule arranged with sponsor');
+  assert.deepEqual(draftFromSaved(snapshot), plan);
+  const spun = spinQuarterPlan([four, two, ilc], { ...prefs, target: 16 }, plan, 'Fall', 'breadth');
+  assert.ok(spun.some(item => item.id === ilc.id && item.credits === 10 && item.note === 'Local journalism'));
+  assert.equal(suggestThemePlan([ilc], prefs, 'practice').Fall.length, 0);
 });

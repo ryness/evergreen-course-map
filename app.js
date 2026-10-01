@@ -1,5 +1,5 @@
-import { TERMS, STANDINGS, FORMATS, INTERESTS, compactMeetingTimes, offeringAvailable, reviewPlan, capturePlan, draftFromSaved, savedCredits, validSavedPlan } from './planner.js?v=20260930-saved-plans';
-import { THEMES, courseRelevance, courseAlreadyTaken, suggestThemePlan, spinQuarterPlan, replacementSuggestions } from './recommend.js?v=20260927-goals-toggle';
+import { TERMS, STANDINGS, FORMATS, INTERESTS, ILC_ID, ilcOffering, compactMeetingTimes, offeringAvailable, reviewPlan, capturePlan, draftFromSaved, savedCredits, validSavedPlan } from './planner.js?v=20261001-ilc';
+import { THEMES, courseRelevance, courseAlreadyTaken, suggestThemePlan, spinQuarterPlan, replacementSuggestions } from './recommend.js?v=20261001-ilc';
 
 const COOKIE = 'evergreen-course-map-v1';
 const EXCLUDED_COOKIE = 'evergreen-course-map-excluded-v1';
@@ -8,6 +8,7 @@ const $ = id => document.getElementById(id);
 const emptyPlan = () => Object.fromEntries(TERMS.map(term => [term, []]));
 const defaults = { academicYear: '', standing: 'Freshman', target: 16, location: 'Any location', careerGoals: '', academicFocus: '', otherInterests: '', dislikedFields: '', completedCourses: '', formats: [...FORMATS] };
 const state = { prefs: { ...defaults }, plans: {}, themes: {}, spins: {}, excluded: {}, savedPlans: [], savedPlansAvailable: true, compare: [], replacement: null, term: 'Fall', query: '', creditFilter: 0, sort: 'relevance', visible: 18, data: null, manifest: null };
+const ILC = ilcOffering();
 let toastTimer, goalsTimer, suggestionsTimer;
 
 function readCookie() {
@@ -89,7 +90,7 @@ function notify(message) {
   clearTimeout(toastTimer); toastTimer = setTimeout(() => toast.classList.remove('show'), 2800);
 }
 
-function catalog() { return state.data?.courses || []; }
+function catalog() { return state.data ? [ILC, ...state.data.courses] : []; }
 function byId() { return new Map(catalog().map(course => [course.id, course])); }
 function currentPlan() { return state.plans[state.prefs.academicYear] || emptyPlan(); }
 function isPinned(id, term) { return (currentPlan()[term] || []).some(item => item.id === id && item.pinned); }
@@ -234,7 +235,7 @@ function renderControls() {
   if (!creditValues.includes(state.creditFilter)) state.creditFilter = 0;
   $('credit-filter').innerHTML = '<option value="0">Any credits</option>' + creditValues.map(n => `<option value="${n}">${n} credits</option>`).join('');
   $('credit-filter').value = String(state.creditFilter);
-  $('data-note').textContent = `${state.data.courses.length} undergraduate offerings · ${state.prefs.academicYear} · refreshed ${new Date(state.data.updatedAt).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'})} from Evergreen’s catalog`;
+  $('data-note').textContent = `${state.data.courses.length} undergraduate offerings + an ILC planner option · ${state.prefs.academicYear} · refreshed ${new Date(state.data.updatedAt).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'})} from Evergreen’s catalog`;
 }
 
 function syncGoalInputs() {
@@ -263,7 +264,7 @@ function renderCourses() {
   let results = matchingCourses();
   if (state.sort === 'title') results.sort((a,b) => a.title.localeCompare(b.title));
   else if (state.sort === 'credits') results.sort((a,b) => Math.max(...b.credits) - Math.max(...a.credits) || a.title.localeCompare(b.title));
-  else results.sort((a,b) => relevance(b) - relevance(a) || a.title.localeCompare(b.title));
+  else results.sort((a,b) => Number(Boolean(b.isIlc)) - Number(Boolean(a.isIlc)) || relevance(b) - relevance(a) || a.title.localeCompare(b.title));
   const hasGoals = Boolean(state.prefs.careerGoals || state.prefs.academicFocus || state.prefs.otherInterests || state.prefs.dislikedFields);
   const plannedCount = plannedIds(state.term).size;
   $('result-count').textContent = `${results.length} ${results.length === 1 ? 'offering' : 'offerings'} for ${state.term.toLowerCase()}${state.creditFilter ? ` · offering ${state.creditFilter} credits` : ''}${hasGoals && state.sort === 'relevance' ? ' · ranked by your goals' : ''}${plannedCount ? ` · ${plannedCount} already in your ${state.term.toLowerCase()} plan` : ''}`;
@@ -272,16 +273,18 @@ function renderCourses() {
     const pinned = isPinned(course.id, state.term);
     const comparing = state.compare.some(item => item.id === course.id && item.term === state.term);
     const availableCredits = course.credits;
-    const preferred = state.creditFilter && availableCredits.includes(state.creditFilter) ? state.creditFilter : availableCredits.filter(n => n <= state.prefs.target).at(-1) ?? availableCredits[0];
+    const quarterCredits = (currentPlan()[state.term] || []).reduce((sum, item) => sum + Number(item.credits), 0);
+    const desiredCredits = course.isIlc ? Math.max(2, state.prefs.target - quarterCredits) : state.prefs.target;
+    const preferred = state.creditFilter && availableCredits.includes(state.creditFilter) ? state.creditFilter : availableCredits.filter(n => n <= desiredCredits).at(-1) ?? availableCredits[0];
     const alreadyTaken = courseAlreadyTaken(course, state.prefs.completedCourses);
-    const mode = course.modes?.[state.term] || 'Format TBA';
+    const mode = course.isIlc ? 'Independent study' : course.modes?.[state.term] || 'Format TBA';
     const schedule = scheduleText(course, state.term);
     const location = course.location && course.location !== 'Olympia' ? course.location : '';
     const offeredTerms = TERMS.filter(term => offeringAvailable(course, term, state.prefs));
     const otherTerms = offeredTerms.filter(term => term !== state.term);
     const status = course.offerings?.[state.term]?.status || '';
     const choices = `<div class="course-choice-actions">${pinControl(course, state.term, pinned)}${isPinnedAnywhere(course.id) ? '' : `<button class="exclude-button" type="button" data-exclude="${escapeHtml(course.id)}" aria-label="Exclude ${escapeHtml(course.title)} from suggestions">Not for me</button>`}</div>`;
-    return `<article class="course-card" data-course="${escapeHtml(course.id)}"><div class="course-top"><a class="course-title" href="${escapeHtml(course.url)}" target="_blank" rel="noopener">${escapeHtml(course.title)} ↗</a>${choices}</div><div class="course-meta"><span class="pill gold">${escapeHtml(course.type)}</span><span class="pill">${escapeHtml(mode)}</span><span class="pill neutral">${escapeHtml(course.credits.join(' or '))} cr</span>${alreadyTaken ? '<span class="pill taken">Listed as already taken</span>' : ''}${location ? `<span class="pill neutral">${escapeHtml(location)}</span>` : ''}${otherTerms.length ? `<span class="pill neutral">Also ${escapeHtml(otherTerms.join(' + '))}</span>` : ''}${status === 'Conditional' ? '<span class="pill gold">Conditional entry</span>' : ''}${course.prerequisites && !/^none\b|^no prerequisites/i.test(course.prerequisites) ? '<span class="pill gold">Entry requirements</span>' : ''}</div><p class="course-desc">${escapeHtml(course.description || (course.fields || []).join(' · ') || 'Read the official catalog entry for course details.')}</p>${schedule ? `<p class="course-extra">Meets ${escapeHtml(schedule)}${course.timeOffered ? ` · ${escapeHtml(course.timeOffered)}` : ''}</p>` : '<p class="course-extra">Meeting times: see official schedule</p>'}<div class="course-actions"><div class="course-links"><a href="${escapeHtml(course.scheduleUrl || course.url)}" target="_blank" rel="noopener">${course.scheduleUrl ? 'Full schedule' : 'Catalog details'} ↗</a><button class="compare-button" type="button" data-compare="${course.id}">${comparing ? 'Remove comparison' : 'Compare'}</button></div><div class="credit-picker"><label for="credits-${course.id}">Credits</label><select id="credits-${course.id}" data-credit-for="${course.id}">${availableCredits.map(n => `<option value="${n}" ${n === preferred ? 'selected' : ''}>${n}</option>`).join('')}</select><button class="add-button" type="button" data-add="${course.id}">Add to ${state.term}</button></div></div>${otherTerms.length ? `<button type="button" class="add-all" data-add-all="${course.id}">Add ${escapeHtml(offeredTerms.join(' + '))}</button>` : ''}</article>`;
+    return `<article class="course-card${course.isIlc ? ' ilc-card' : ''}" data-course="${escapeHtml(course.id)}"><div class="course-top"><a class="course-title" href="${escapeHtml(course.url)}" target="_blank" rel="noopener">${escapeHtml(course.title)} ↗</a>${choices}</div><div class="course-meta"><span class="pill gold">${escapeHtml(course.type)}</span><span class="pill">${escapeHtml(mode)}</span><span class="pill neutral">${course.isIlc ? '2–16' : escapeHtml(course.credits.join(' or '))} cr</span>${alreadyTaken ? '<span class="pill taken">Listed as already taken</span>' : ''}${location ? `<span class="pill neutral">${escapeHtml(location)}</span>` : ''}${otherTerms.length ? `<span class="pill neutral">Also ${escapeHtml(otherTerms.join(' + '))}</span>` : ''}${status === 'Conditional' ? '<span class="pill gold">Conditional entry</span>' : ''}${course.prerequisites && !/^none\b|^no prerequisites/i.test(course.prerequisites) ? '<span class="pill gold">Entry requirements</span>' : ''}</div><p class="course-desc">${escapeHtml(course.description || (course.fields || []).join(' · ') || 'Read the official catalog entry for course details.')}</p>${course.isIlc ? '<p class="course-extra">Schedule arranged with sponsor · Subject to approval</p>' : schedule ? `<p class="course-extra">Meets ${escapeHtml(schedule)}${course.timeOffered ? ` · ${escapeHtml(course.timeOffered)}` : ''}</p>` : '<p class="course-extra">Meeting times: see official schedule</p>'}<div class="course-actions"><div class="course-links"><a href="${escapeHtml(course.scheduleUrl || course.url)}" target="_blank" rel="noopener">${course.isIlc ? 'ILC requirements' : course.scheduleUrl ? 'Full schedule' : 'Catalog details'} ↗</a><button class="compare-button" type="button" data-compare="${course.id}">${comparing ? 'Remove comparison' : 'Compare'}</button></div><div class="credit-picker"><label for="credits-${course.id}">Credits</label><select id="credits-${course.id}" data-credit-for="${course.id}">${availableCredits.map(n => `<option value="${n}" ${n === preferred ? 'selected' : ''}>${n}</option>`).join('')}</select><button class="add-button" type="button" data-add="${course.id}">Add to ${state.term}</button></div></div>${otherTerms.length && !course.isIlc ? `<button type="button" class="add-all" data-add-all="${course.id}">Add ${escapeHtml(offeredTerms.join(' + '))}</button>` : ''}</article>`;
   }).join('') : `<div class="empty-state"><strong>No courses match this view.</strong><br>Try another quarter, credit value, format, or search phrase. Courses already in this quarter of My year are hidden here until you remove them from the plan.</div>`;
   $('load-more').hidden = results.length <= state.visible;
   $('load-more').textContent = `Show more courses (${results.length - state.visible} remaining)`;
@@ -326,7 +329,8 @@ function renderPlan() {
     return `<section class="plan-term"><div class="plan-term-head"><div><span>${term}</span><small>${sum} / ${state.prefs.target} credits</small></div><button class="new-spin" type="button" data-spin-term="${term}" aria-label="New ${term} course combination">↻ New spin</button></div><progress max="${state.prefs.target}" value="${Math.min(sum,state.prefs.target)}" aria-label="${term} credits"></progress>${entries.length ? entries.map(item => {
       const course = lookup.get(item.id);
       const choices = pinControl(course, term, !!item.pinned, 'plan-pin choice-pin') + (item.pinned ? '' : `<button class="plan-exclude" type="button" data-exclude="${escapeHtml(course.id)}" data-exclude-term="${term}" aria-label="Exclude ${escapeHtml(course.title)} from suggestions">Not for me</button>`);
-      return `<div class="plan-item${item.pinned ? ' is-pinned' : ''}"><div><a href="${escapeHtml(course.url)}" target="_blank" rel="noopener">${escapeHtml(course.title)} ↗</a><small class="plan-meta">${item.credits} cr · ${escapeHtml(course.modes?.[term] || 'Format TBA')} · ${escapeHtml(compactMeetingTimes(course, term))}</small><div class="plan-choice">${choices}</div></div><button class="plan-remove" type="button" data-remove="${escapeHtml(item.id)}" data-remove-term="${term}" aria-label="Remove ${escapeHtml(course.title)} from ${term}" title="Remove">×</button></div>`;
+      const ilcEditor = course.isIlc ? `<div class="ilc-editor"><label>Working title <input type="text" data-ilc-note="${term}" maxlength="80" value="${escapeHtml(item.note || '')}" placeholder="e.g. Community journalism project"></label><label>Credits <select data-ilc-credits="${term}">${course.credits.map(n => `<option value="${n}" ${n === Number(item.credits) ? 'selected' : ''}>${n}</option>`).join('')}</select></label></div>` : '';
+      return `<div class="plan-item${item.pinned ? ' is-pinned' : ''}"><div><a href="${escapeHtml(course.url)}" target="_blank" rel="noopener">${escapeHtml(course.title)} ↗</a><small class="plan-meta">${item.credits} cr · ${course.isIlc ? 'Independent study' : escapeHtml(course.modes?.[term] || 'Format TBA')} · ${escapeHtml(compactMeetingTimes(course, term))}</small>${ilcEditor}<div class="plan-choice">${choices}</div></div><button class="plan-remove" type="button" data-remove="${escapeHtml(item.id)}" data-remove-term="${term}" aria-label="Remove ${escapeHtml(course.title)} from ${term}" title="Remove">×</button></div>`;
     }).join('') : '<p class="plan-term-empty">Nothing chosen yet</p>'}${replacementHtml}</section>`;
   }).join('');
   renderFinalReview(plan);
@@ -385,7 +389,7 @@ async function loadYear(year) {
     state.prefs.academicYear = year;
     state.plans[year] ||= emptyPlan();
     state.themes[year] ||= 'custom';
-    state.excluded[year] = (state.excluded[year] || []).filter(id => state.data.courses.some(course => course.id === id));
+    state.excluded[year] = (state.excluded[year] || []).filter(id => id === ILC_ID || state.data.courses.some(course => course.id === id));
     state.replacement = null;
     syncGoalInputs();
     save(); render();
@@ -509,10 +513,10 @@ function events() {
     if (!course || !course.credits.includes(credits)) return;
     const plan = currentPlan();
     const terms = all ? TERMS.filter(term => offeringAvailable(course, term, state.prefs)) : [state.term];
-    for (const term of terms) if (!(plan[term] || []).some(item => item.id === id)) plan[term].push({ id, credits });
+    for (const term of terms) if (!(plan[term] || []).some(item => item.id === id)) plan[term].push({ id, credits, ...(course.isIlc ? { pinned: true } : {}) });
     state.themes[state.prefs.academicYear] = 'custom'; state.replacement = null;
     save(); renderCourses(); renderPlan();
-    notify(all ? 'Added across its offered quarters.' : `Added to ${state.term}.`);
+    notify(course.isIlc ? `ILC added to ${state.term}. Add a working title in My year.` : all ? 'Added across its offered quarters.' : `Added to ${state.term}.`);
   });
   $('compare-grid').addEventListener('click', event => {
     const pin = event.target.closest('[data-pin-id]');
@@ -530,6 +534,21 @@ function events() {
     save(); renderCompare(); renderCourses();
   });
   $('clear-compare').addEventListener('click', () => { state.compare = []; save(); renderCompare(); renderCourses(); });
+  $('plan-terms').addEventListener('input', event => {
+    const input = event.target.closest('[data-ilc-note]');
+    if (!input) return;
+    const item = (currentPlan()[input.dataset.ilcNote] || []).find(entry => entry.id === ILC_ID);
+    if (item) { item.note = input.value.slice(0, 80); save(); }
+  });
+  $('plan-terms').addEventListener('change', event => {
+    const select = event.target.closest('[data-ilc-credits]');
+    if (!select) return;
+    const item = (currentPlan()[select.dataset.ilcCredits] || []).find(entry => entry.id === ILC_ID);
+    const credits = Number(select.value);
+    if (!item || !ILC.credits.includes(credits)) return;
+    item.credits = credits;
+    save(); renderCourses(); renderPlan();
+  });
   $('plan-terms').addEventListener('click', event => {
     const spin = event.target.closest('[data-spin-term]');
     if (spin) {
@@ -613,7 +632,7 @@ function events() {
     else loadYear(state.prefs.academicYear);
     notify('Other choices reset. Your Yes for me courses remain.');
   });
-  $('copy-plan').addEventListener('click', async () => { const lookup = byId(); const lines = [`Evergreen Course Mapper — ${state.prefs.academicYear}`]; for (const term of TERMS) { const entries = currentPlan()[term] || []; lines.push(`\n${term} (${entries.reduce((n,x)=>n+Number(x.credits),0)} credits)`); entries.forEach(item => { const c = lookup.get(item.id); if (c) lines.push(`• ${c.title} — ${item.credits} credits — ${c.url}`); }); } lines.push('\nCheck official course listings before enrolling.'); try { await navigator.clipboard.writeText(lines.join('\n')); notify('Plan summary copied.'); } catch { notify('Clipboard unavailable in this browser.'); } });
+  $('copy-plan').addEventListener('click', async () => { const lookup = byId(); const lines = [`Evergreen Course Mapper — ${state.prefs.academicYear}`]; for (const term of TERMS) { const entries = currentPlan()[term] || []; lines.push(`\n${term} (${entries.reduce((n,x)=>n+Number(x.credits),0)} credits)`); entries.forEach(item => { const c = lookup.get(item.id); if (c) lines.push(`• ${c.isIlc && item.note?.trim() ? `ILC: ${item.note.trim()}` : c.title} — ${item.credits} credits — ${c.url}`); }); } lines.push('\nCheck official course listings before enrolling.'); try { await navigator.clipboard.writeText(lines.join('\n')); notify('Plan summary copied.'); } catch { notify('Clipboard unavailable in this browser.'); } });
 }
 
 async function start() {

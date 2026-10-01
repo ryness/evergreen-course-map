@@ -6,7 +6,7 @@ An independent, shareable course planner for [The Evergreen State College](https
 
 `scripts/sync_catalog.py` reads Evergreen's public [course catalog](https://www.evergreen.edu/catalog/) and linked public schedules. It writes a static JSON snapshot to `data/`. GitHub Actions refreshes the newest catalog each week and deploys the site to GitHub Pages. Previous academic-year snapshots stay available in the year menu. If Evergreen changes its HTML layout, the refresh fails before replacing the existing snapshot.
 
-The site shows undergraduate offerings and published meeting times when available. Planning suggestions are heuristic; they are not admissions, registration, advising, or enrollment decisions. Always open the official listing to check current credits, prerequisites, location, schedule, fees, and space.
+The site shows undergraduate offerings and published meeting times when available. Saved plans have a QuickRef popup with only course names and credits by quarter, alongside options to reopen the draft or print a PDF. Planning suggestions are heuristic; they are not admissions, registration, advising, or enrollment decisions. Always open the official listing to check current credits, prerequisites, location, schedule, fees, and space.
 
 Explore Courses also includes a planner-only Individual Learning Contract (ILC) option in each quarter. Students can choose 2–16 credits in two-credit steps and enter a working title after adding it. An ILC is arranged with a sponsor and requires college approval; the final review calls this out. Its title and credits are preserved in named plans and printouts.
 

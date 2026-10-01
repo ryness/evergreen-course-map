@@ -122,8 +122,18 @@ function renderSavedPlans() {
     const date = new Date(snapshot.savedAt);
     const saved = Number.isNaN(date.getTime()) ? 'Saved plan' : `Saved ${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
     const quarters = TERMS.map(term => `${term} ${savedCredits(snapshot, term)} cr`).join(' · ');
-    return `<article class="saved-plan-card"><h3>${escapeHtml(snapshot.name)}</h3><p class="saved-plan-facts">${escapeHtml(snapshot.academicYear)} · ${escapeHtml(saved)}</p><p class="saved-plan-quarters">${escapeHtml(quarters)}</p><div class="saved-plan-actions"><button class="button-secondary" type="button" data-open-saved="${escapeHtml(snapshot.id)}">Open in My year</button><button class="button-secondary" type="button" data-print-saved="${escapeHtml(snapshot.id)}">Print / Save PDF</button><button class="text-button saved-plan-remove" type="button" data-remove-saved="${escapeHtml(snapshot.id)}">Remove</button></div></article>`;
+    return `<article class="saved-plan-card"><div class="saved-plan-head"><h3>${escapeHtml(snapshot.name)}</h3><details class="saved-plan-menu"><summary aria-label="More options for ${escapeHtml(snapshot.name)}" title="More options">⋯</summary><button type="button" data-remove-saved="${escapeHtml(snapshot.id)}">Remove saved plan</button></details></div><p class="saved-plan-facts">${escapeHtml(snapshot.academicYear)} · ${escapeHtml(saved)}</p><p class="saved-plan-quarters">${escapeHtml(quarters)}</p><div class="saved-plan-actions"><button class="button-secondary" type="button" data-open-saved="${escapeHtml(snapshot.id)}">Open in My Year</button><button class="button-secondary" type="button" data-print-saved="${escapeHtml(snapshot.id)}">PDF</button><button class="button-secondary" type="button" data-quickref-saved="${escapeHtml(snapshot.id)}">QuickRef</button></div></article>`;
   }).join('') : '<p class="saved-plans-empty">No named plans yet. Build a draft in My year, then save it here to compare options.</p>';
+}
+
+function showQuickRef(snapshot) {
+  const quarters = TERMS.map(term => {
+    const entries = snapshot.terms[term];
+    if (!entries.length) return '';
+    return `<section class="quickref-quarter"><h3>${term}<span>${savedCredits(snapshot, term)} cr</span></h3><ul>${entries.map(entry => `<li><span>${escapeHtml(entry.title)}</span><strong>${entry.credits} cr</strong></li>`).join('')}</ul></section>`;
+  }).join('');
+  $('quickref-content').innerHTML = `<p class="quickref-eyebrow">${escapeHtml(snapshot.academicYear)} · QuickRef</p><h2 id="quickref-title">${escapeHtml(snapshot.name)}</h2>${quarters}`;
+  $('quickref-dialog').showModal();
 }
 
 function printPlan(snapshot) {
@@ -415,16 +425,20 @@ function events() {
     printPlan(currentSnapshot($('plan-name').value.trim() || 'Current draft'));
   });
   $('saved-plans-list').addEventListener('click', async event => {
-    const button = event.target.closest('[data-open-saved], [data-print-saved], [data-remove-saved]');
+    const button = event.target.closest('[data-open-saved], [data-print-saved], [data-quickref-saved], [data-remove-saved]');
     if (!button) return;
-    const id = button.dataset.openSaved || button.dataset.printSaved || button.dataset.removeSaved;
+    const id = button.dataset.openSaved || button.dataset.printSaved || button.dataset.quickrefSaved || button.dataset.removeSaved;
     const snapshot = state.savedPlans.find(item => item.id === id);
     if (!snapshot) return;
     if (button.dataset.openSaved) await openSavedPlan(snapshot);
     else if (button.dataset.printSaved) printPlan(snapshot);
+    else if (button.dataset.quickrefSaved) showQuickRef(snapshot);
     else if (window.confirm(`Remove “${snapshot.name}” from My plans? This cannot be undone.`)) {
       if (persistSavedPlans(state.savedPlans.filter(item => item.id !== id))) notify('Saved plan removed.');
     }
+  });
+  $('quickref-dialog').addEventListener('click', event => {
+    if (event.target === $('quickref-dialog')) $('quickref-dialog').close();
   });
   $('goals-accordion').addEventListener('toggle', () => $('setup').classList.toggle('is-collapsed', !$('goals-accordion').open));
   document.querySelector('a[href="#setup-title"]').addEventListener('click', () => { $('goals-accordion').open = true; });
